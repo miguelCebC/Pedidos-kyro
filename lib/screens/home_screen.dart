@@ -3,13 +3,25 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database_helper.dart';
 import '../services/api_service.dart';
+
+// Pantallas principales
 import 'catalogo_articulos_screen.dart';
 import 'catalogo_clientes_screen.dart';
 import 'lista_pedidos_screen.dart';
+import 'presupuestos_screen.dart';
+import 'leads_screen.dart';
+import 'crm_calendario_screen.dart';
+
+// Pantallas de configuración y acceso
 import 'configuracion_screen.dart';
 import 'login_screen.dart';
+
+// Pantallas de creación (para el botón flotante)
 import 'crear_pedido_screen.dart';
 import 'crear_cliente_screen.dart';
+import 'crear_presupuesto_screen.dart';
+import 'crear_visita_screen.dart';
+import 'crear_editar_lead_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,33 +31,48 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // Índice seleccionado del menú (0: Artículos por defecto)
   int _selectedIndex = 0;
-  String _nombreComercial = '';
+  String _nombreComercial = 'Cargando...';
 
-  // Keys para poder recargar las listas desde aquí
+  // Keys globales para recargar listas tras acciones
   final GlobalKey<CatalogoClientesScreenState> _clientesKey = GlobalKey();
   final GlobalKey<ListaPedidosScreenState> _pedidosKey = GlobalKey();
+  // Puedes añadir más keys si necesitas recargar otras pantallas (ej: presupuestos)
 
   late List<Widget> _screens;
-  final List<String> _titles = ['Artículos', 'Pedidos', 'Clientes'];
+  late List<String> _titles;
 
   @override
   void initState() {
     super.initState();
     _cargarDatosUsuario();
 
-    // Configurar listener de cierre forzoso
+    // Listener para cierres forzosos por token/conexión
     VelneoAPIService.onCierreForzoso = (mensaje) {
       _mostrarDialogoCierre(mensaje);
     };
 
+    // 🟢 DEFINICIÓN DE PANTALLAS (Orden coincide con Drawer)
     _screens = [
-      const CatalogoArticulosScreen(),
-      ListaPedidosScreen(key: _pedidosKey),
-      CatalogoClientesScreen(key: _clientesKey),
+      const CatalogoArticulosScreen(), // 0
+      ListaPedidosScreen(key: _pedidosKey), // 1
+      CatalogoClientesScreen(key: _clientesKey), // 2
+      const PresupuestosScreen(), // 3
+      const CRMCalendarioScreen(), // 4
+      const LeadsScreen(), // 5
     ];
 
-    // 🟢 INICIAR SINCRONIZACIÓN COMPLETA EN SEGUNDO PLANO
+    _titles = [
+      'Catálogo de Artículos',
+      'Lista de Pedidos',
+      'Cartera de Clientes',
+      'Presupuestos',
+      'Agenda CRM',
+      'Gestión de Leads',
+    ];
+
+    // Sincronización automática al iniciar
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _sincronizarGlobalEnSegundoPlano();
     });
@@ -73,9 +100,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () {
-                  SystemNavigator.pop();
-                },
+                onPressed: () => SystemNavigator.pop(),
                 child: const Text(
                   'CERRAR APLICACIÓN',
                   style: TextStyle(color: Colors.white),
@@ -95,7 +120,54 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 🟢 LÓGICA DE SINCRONIZACIÓN COMPLETA (Igual que Configuración)
+  // 🟢 GESTIÓN INTELIGENTE DEL BOTÓN FLOTANTE
+  void _onFabPressed() async {
+    switch (_selectedIndex) {
+      case 1: // Pedidos
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CrearPedidoScreen()),
+        );
+        if (result == true) _pedidosKey.currentState?.recargarPedidos();
+        break;
+
+      case 2: // Clientes
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CrearClienteScreen()),
+        );
+        if (result == true) _clientesKey.currentState?.recargarClientes();
+        break;
+
+      case 3: // Presupuestos
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CrearPresupuestoScreen()),
+        );
+        // Si tuvieras key para presupuestos, aquí recargarías
+        break;
+
+      case 4: // Agenda
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CrearVisitaScreen()),
+        );
+        break;
+
+      case 5: // Leads
+        await Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CrearEditarLeadScreen()),
+        );
+        break;
+
+      default:
+        // Artículos (0) no tiene acción de crear
+        break;
+    }
+  }
+
+  // 🟢 MOTOR DE SINCRONIZACIÓN COMPLETO
   Future<void> _sincronizarGlobalEnSegundoPlano() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -109,7 +181,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('⬇️ Sincronizando datos completos...'),
-            duration: Duration(seconds: 4), // Un poco más de tiempo visible
+            duration: Duration(seconds: 2),
             backgroundColor: Color(0xFF032458),
           ),
         );
@@ -121,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       final db = DatabaseHelper.instance;
 
-      print('🚀 [HOME] Iniciando Sincronización Completa en 2º Plano...');
+      print('🚀 [HOME] Iniciando Sincronización Completa...');
 
       // 1. Conexión
       if (!await api.probarConexion()) {
@@ -129,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      // 2. Artículos (por lotes)
+      // 2. Artículos
       final articulosLista = await api.obtenerArticulos();
       await db.limpiarArticulos();
       const batchSize = 500;
@@ -168,7 +240,7 @@ class _HomeScreenState extends State<HomeScreen> {
         comercialesList.cast<Map<String, dynamic>>(),
       );
 
-      // 3.1 Contactos (Teléfonos/Emails)
+      // 3.1 Contactos
       final contactos = await api.obtenerContactos();
       await db.insertarContactosLote(contactos);
 
@@ -187,7 +259,7 @@ class _HomeScreenState extends State<HomeScreen> {
         (await api.obtenerDirecciones()).cast<Map<String, dynamic>>(),
       );
 
-      // 6. CRM (Maestros)
+      // 6. CRM Maestros
       await db.limpiarTiposVisita();
       await db.insertarTiposVisitaLote(
         (await api.obtenerTiposVisita()).cast<Map<String, dynamic>>(),
@@ -209,20 +281,17 @@ class _HomeScreenState extends State<HomeScreen> {
         (await api.obtenerCampanas()).cast<Map<String, dynamic>>(),
       );
 
-      // 7. Transaccional
-      // Leads
+      // 7. Transaccional (Leads, Agenda, Pedidos, Presupuestos)
       await db.limpiarLeads();
       await db.insertarLeadsLote(
         (await api.obtenerLeads()).cast<Map<String, dynamic>>(),
       );
 
-      // Agenda
       await db.limpiarAgenda();
       await db.insertarAgendasLote(
         (await api.obtenerAgenda(comercialId)).cast<Map<String, dynamic>>(),
       );
 
-      // Pedidos
       await db.limpiarPedidos();
       await db.insertarPedidosLote(
         (await api.obtenerPedidos()).cast<Map<String, dynamic>>(),
@@ -231,7 +300,6 @@ class _HomeScreenState extends State<HomeScreen> {
         (await api.obtenerTodasLineasPedido()).cast<Map<String, dynamic>>(),
       );
 
-      // Presupuestos
       await db.limpiarPresupuestos();
       await db.insertarPresupuestosLote(
         (await api.obtenerPresupuestos()).cast<Map<String, dynamic>>(),
@@ -251,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> {
         (await api.obtenerTarifasArticulo()).cast<Map<String, dynamic>>(),
       );
 
-      // 9. Movimientos (Histórico)
+      // 9. Movimientos
       await db.limpiarMovimientos();
       final movimientos = await api.obtenerMovimientos();
       for (var i = 0; i < movimientos.length; i += batchSize) {
@@ -275,7 +343,6 @@ class _HomeScreenState extends State<HomeScreen> {
         await prefs.setDouble('iva_exento', configIva['iva_exento']!);
       }
 
-      // Finalizar
       await prefs.setInt(
         'ultima_sincronizacion',
         DateTime.now().millisecondsSinceEpoch,
@@ -284,15 +351,13 @@ class _HomeScreenState extends State<HomeScreen> {
       print('✅ [HOME] Sincronización completa finalizada.');
 
       if (mounted) {
-        // 🟢 CLAVE: RECARGAR LAS PANTALLAS HIJAS
-        // Esto hace que aparezcan los nombres de clientes en los pedidos
         _pedidosKey.currentState?.recargarPedidos();
         _clientesKey.currentState?.recargarClientes();
-
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('✅ Datos actualizados y listos'),
+            content: Text('✅ Datos actualizados'),
             backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
           ),
         );
       }
@@ -310,24 +375,18 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _onFabPressed() async {
-    if (_selectedIndex == 1) {
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const CrearPedidoScreen()),
-      );
-      if (result == true) _pedidosKey.currentState?.recargarPedidos();
-    } else if (_selectedIndex == 2) {
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const CrearClienteScreen()),
-      );
-      if (result == true) _clientesKey.currentState?.recargarClientes();
-    }
+  void _seleccionarOpcionMenu(int index) {
+    Navigator.pop(context); // Cerrar drawer
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    // Mostrar botón flotante excepto en Artículos (0)
+    final bool showFab = _selectedIndex != 0;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(_titles[_selectedIndex]),
@@ -343,42 +402,20 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+
+      // Cuerpo
       body: IndexedStack(index: _selectedIndex, children: _screens),
-      floatingActionButton: (_selectedIndex == 1 || _selectedIndex == 2)
+
+      // Botón Flotante
+      floatingActionButton: showFab
           ? FloatingActionButton(
               onPressed: _onFabPressed,
               backgroundColor: const Color(0xFF032458),
-              child: Icon(
-                _selectedIndex == 1 ? Icons.add : Icons.add,
-                color: Colors.white,
-              ),
+              child: const Icon(Icons.add, color: Colors.white),
             )
           : null,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (i) => setState(() => _selectedIndex = i),
-        backgroundColor: Colors.white,
-        selectedItemColor: const Color(0xFF032458),
-        unselectedItemColor: Colors.grey,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.inventory_2_outlined),
-            activeIcon: Icon(Icons.inventory_2),
-            label: 'Artículos',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.shopping_cart_outlined),
-            activeIcon: Icon(Icons.shopping_cart),
-            label: 'Pedidos',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.people_outline),
-            activeIcon: Icon(Icons.people),
-            label: 'Clientes',
-          ),
-        ],
-      ),
+
+      // Menú Lateral (Drawer)
       drawer: Drawer(
         child: Column(
           children: [
@@ -386,12 +423,37 @@ class _HomeScreenState extends State<HomeScreen> {
               decoration: const BoxDecoration(color: Color(0xFF032458)),
               accountName: Text(
                 _nombreComercial,
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
               ),
-              accountEmail: null,
+              accountEmail: const Text("CRM Velneo v7"),
+              currentAccountPicture: const CircleAvatar(
+                backgroundColor: Colors.white,
+                child: Icon(Icons.person, size: 40, color: Color(0xFF032458)),
+              ),
             ),
+
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _buildDrawerItem(0, Icons.inventory_2, 'Artículos'),
+                  _buildDrawerItem(1, Icons.shopping_cart, 'Pedidos'),
+                  _buildDrawerItem(2, Icons.people, 'Clientes'),
+                  const Divider(),
+                  _buildDrawerItem(3, Icons.request_quote, 'Presupuestos'),
+                  _buildDrawerItem(4, Icons.calendar_month, 'Agenda'),
+                  _buildDrawerItem(5, Icons.filter_alt, 'Leads'),
+                ],
+              ),
+            ),
+
+            const Divider(),
+
             ListTile(
-              leading: const Icon(Icons.settings, color: Color(0xFF032458)),
+              leading: const Icon(Icons.settings, color: Colors.grey),
               title: const Text('Configuración'),
               onTap: () {
                 Navigator.pop(context);
@@ -403,8 +465,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-            const Divider(),
-            // const Spacer(),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
               title: const Text(
@@ -413,10 +473,30 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               onTap: _cerrarSesion,
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildDrawerItem(int index, IconData icon, String title) {
+    final bool isSelected = _selectedIndex == index;
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: isSelected ? const Color(0xFF032458) : Colors.grey[700],
+      ),
+      title: Text(
+        title,
+        style: TextStyle(
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          color: isSelected ? const Color(0xFF032458) : Colors.black87,
+        ),
+      ),
+      selected: isSelected,
+      selectedTileColor: const Color(0xFF032458).withOpacity(0.1),
+      onTap: () => _seleccionarOpcionMenu(index),
     );
   }
 }
