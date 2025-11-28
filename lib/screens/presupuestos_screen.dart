@@ -9,14 +9,14 @@ class PresupuestosScreen extends StatefulWidget {
   const PresupuestosScreen({super.key});
 
   @override
-  State<PresupuestosScreen> createState() => _PresupuestosScreenState();
+  State<PresupuestosScreen> createState() => PresupuestosScreenState();
 }
 
-class _PresupuestosScreenState extends State<PresupuestosScreen> {
+class PresupuestosScreenState extends State<PresupuestosScreen> {
   List<Map<String, dynamic>> _presupuestos = [];
   List<Map<String, dynamic>> _presupuestosFiltrados = [];
+  final Map<int, String> _clientesNombres = {};
   final TextEditingController _searchController = TextEditingController();
-  final Map<int, String> _clientesNombres = {}; // 👈 ESTA LÍNEA
 
   bool _isLoading = true;
   bool _sincronizando = false;
@@ -34,32 +34,74 @@ class _PresupuestosScreenState extends State<PresupuestosScreen> {
     super.dispose();
   }
 
+  // Método público para recargar desde el HomeScreen si es necesario
+  Future<void> recargarPresupuestos() => _cargarDatos();
+
   Future<void> _cargarDatos() async {
     setState(() => _isLoading = true);
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final comercialId = prefs.getInt('comercial_id');
-
       final db = DatabaseHelper.instance;
-      List<Map<String, dynamic>> presupuestos = await db.obtenerPresupuestos();
+
+      // 1. Cargar Presupuestos Raw (Cabeceras)
+      var presupuestosRaw = await db.obtenerPresupuestos();
 
       // Filtrar por comercial si está configurado
       if (comercialId != null) {
-        presupuestos = presupuestos
+        presupuestosRaw = presupuestosRaw
             .where((p) => p['comercial_id'] == comercialId)
             .toList();
       }
 
-      // Cargar nombres de clientes
+      // 2. Cargar Clientes para mapear nombres
       final clientes = await db.obtenerClientes();
       _clientesNombres.clear();
       for (var cliente in clientes) {
         _clientesNombres[cliente['id'] as int] = cliente['nombre'] as String;
       }
 
+      // 🟢 3. RECALCULAR TOTALES CON IVA Y DESCUENTOS (Línea a Línea)
+      final List<Map<String, dynamic>> presupuestosCalculados = [];
+
+      for (var p in presupuestosRaw) {
+        final lineas = await db.obtenerLineasPresupuesto(p['id']);
+        double totalReal = 0.0;
+
+        for (var l in lineas) {
+          final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
+          final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
+          final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
+
+          // Descuentos
+          double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
+          double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
+          double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
+          double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
+
+          // Cálculo Neto con descuentos en cascada
+          double precioNeto = prec;
+          if (dto > 0) precioNeto *= (1 - dto / 100);
+          if (d1 > 0) precioNeto *= (1 - d1 / 100);
+          if (d2 > 0) precioNeto *= (1 - d2 / 100);
+          if (d3 > 0) precioNeto *= (1 - d3 / 100);
+
+          // Base imponible de la línea
+          double baseLinea = precioNeto * cant;
+
+          // Sumar al total (Base + IVA)
+          totalReal += baseLinea * (1 + iva / 100);
+        }
+
+        // Crear una copia modificable del presupuesto con el nuevo total
+        final pMod = Map<String, dynamic>.from(p);
+        pMod['total_calculado'] = totalReal;
+        presupuestosCalculados.add(pMod);
+      }
+
       // Ordenar por fecha descendente
-      presupuestos.sort((a, b) {
+      presupuestosCalculados.sort((a, b) {
         try {
           final fechaA = DateTime.parse(a['fecha'] ?? '');
           final fechaB = DateTime.parse(b['fecha'] ?? '');
@@ -70,38 +112,70 @@ class _PresupuestosScreenState extends State<PresupuestosScreen> {
       });
 
       setState(() {
-        _presupuestos = presupuestos;
-        _presupuestosFiltrados = presupuestos;
+        _presupuestos = presupuestosCalculados;
+        _presupuestosFiltrados = presupuestosCalculados;
         _isLoading = false;
       });
+
+      if (_searchController.text.isNotEmpty) {
+        _filtrarPresupuestos();
+      }
     } catch (e) {
       print('Error al cargar presupuestos: $e');
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   void _filtrarPresupuestos() {
     final query = _searchController.text.toLowerCase();
+
+    if (query.isEmpty) {
+      setState(() => _presupuestosFiltrados = _presupuestos);
+      return;
+    }
+
     setState(() {
       _presupuestosFiltrados = _presupuestos.where((presupuesto) {
-        final numero = presupuesto['numero']?.toString().toLowerCase() ?? '';
-        final estado = _getNombreEstado(presupuesto['estado']).toLowerCase();
-        final observaciones =
-            presupuesto['observaciones']?.toString().toLowerCase() ?? '';
+        final numero = (presupuesto['numero'] ?? '').toString().toLowerCase();
+        final clienteNombre = _obtenerNombreCliente(
+          presupuesto['cliente_id'],
+        ).toLowerCase();
+        final observaciones = (presupuesto['observaciones'] ?? '')
+            .toString()
+            .toLowerCase();
+
         return numero.contains(query) ||
-            estado.contains(query) ||
+            clienteNombre.contains(query) ||
             observaciones.contains(query);
       }).toList();
     });
   }
 
+  String _obtenerNombreCliente(int? clienteId) {
+    if (clienteId == null) return 'Cliente desconocido';
+    return _clientesNombres[clienteId] ?? 'Cliente no encontrado ($clienteId)';
+  }
+
   String _formatearFecha(String? fecha) {
-    if (fecha == null || fecha.isEmpty) return 'Sin fecha';
+    if (fecha == null || fecha.isEmpty) return '-';
     try {
       final dt = DateTime.parse(fecha);
       return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
     } catch (e) {
       return fecha;
+    }
+  }
+
+  String _getNombreEstado(String? estado) {
+    switch (estado?.toUpperCase()) {
+      case 'A':
+        return 'Aceptado';
+      case 'P':
+        return 'Pendiente';
+      case 'R':
+        return 'Rechazado';
+      default:
+        return 'Pendiente';
     }
   }
 
@@ -118,90 +192,135 @@ class _PresupuestosScreenState extends State<PresupuestosScreen> {
     }
   }
 
-  String _getNombreEstado(String? estado) {
-    switch (estado?.toUpperCase()) {
-      case 'A':
-        return 'Aceptado';
-      case 'P':
-        return 'Pendiente';
-      case 'R':
-        return 'Rechazado';
-      default:
-        return 'Desconocido';
-    }
-  }
+  Future<void> _sincronizarPendientes() async {
+    final pendientes = _presupuestos
+        .where((p) => p['sincronizado'] == 0)
+        .toList();
 
-  IconData _getIconoEstado(String? estado) {
-    switch (estado?.toUpperCase()) {
-      case 'A':
-        return Icons.check_circle;
-      case 'P':
-        return Icons.pending;
-      case 'R':
-        return Icons.cancel;
-      default:
-        return Icons.help_outline;
+    if (pendientes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay presupuestos pendientes')),
+      );
+      return;
+    }
+
+    setState(() => _sincronizando = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String url = prefs.getString('velneo_url') ?? '';
+      final String apiKey = prefs.getString('velneo_api_key') ?? '';
+
+      if (url.isEmpty || apiKey.isEmpty) return;
+      if (!url.startsWith('http')) url = 'https://$url';
+
+      final apiService = VelneoAPIService(url, apiKey);
+      final db = DatabaseHelper.instance;
+
+      int exitosos = 0;
+
+      for (var p in pendientes) {
+        try {
+          final lineas = await db.obtenerLineasPresupuesto(p['id']);
+
+          // Usamos el total calculado para enviarlo también si la API lo requiere,
+          // aunque idealmente la API debería recalcularlo.
+          final double totalEnvio = p['total_calculado'] ?? 0.0;
+
+          final presupuestoData = {
+            'cliente_id': p['cliente_id'],
+            'comercial_id': p['comercial_id'],
+            'serie_id': p['serie_id'],
+            'fecha': p['fecha'],
+            'observaciones': p['observaciones'],
+            'estado': p['estado'],
+            'total': totalEnvio,
+            'lineas': lineas
+                .map(
+                  (l) => {
+                    'articulo_id': l['articulo_id'],
+                    'cantidad': l['cantidad'],
+                    'precio': l['precio'],
+                    'por_dto': l['por_descuento'],
+                    'dto1': l['dto1'],
+                    'dto2': l['dto2'],
+                    'dto3': l['dto3'],
+                    'reg_iva_vta': l['tipo_iva'],
+                  },
+                )
+                .toList(),
+          };
+
+          await apiService.crearPresupuesto(presupuestoData);
+          await db.actualizarPresupuestoSincronizado(p['id'], 1);
+          exitosos++;
+        } catch (e) {
+          print('Error sincronizando presupuesto ${p['id']}: $e');
+        }
+      }
+
+      await _cargarDatos();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sincronización completada: $exitosos enviados'),
+            backgroundColor: const Color(0xFF032458),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sincronizando = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          // Barra de búsqueda con botón de sincronización
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Buscar presupuestos...',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                              },
-                            )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
+    final int countPendientes = _presupuestos
+        .where((p) => p['sincronizado'] == 0)
+        .length;
 
-                const SizedBox(width: 12),
-                // Botón de sincronización (el que ya tienes)
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF032458),
-                    borderRadius: BorderRadius.circular(12),
+    return Column(
+      children: [
+        // 1. Barra de Búsqueda y Sincronización
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar presupuesto...',
+                    prefixIcon: const Icon(Icons.search),
+                    filled: true,
+                    fillColor: Colors.grey[100],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                   ),
                 ),
+              ),
+              if (countPendientes > 0) ...[
                 const SizedBox(width: 12),
-                // Botón de sincronización
                 Container(
                   decoration: BoxDecoration(
                     color: const Color(0xFF032458),
@@ -217,268 +336,143 @@ class _PresupuestosScreenState extends State<PresupuestosScreen> {
                               strokeWidth: 2,
                             ),
                           )
-                        : const Icon(Icons.sync, color: Colors.white),
-                    onPressed: _sincronizando ? null : _sincronizarPresupuestos,
-                    tooltip: 'Sincronizar presupuestos',
+                        : const Icon(Icons.cloud_upload, color: Colors.white),
+                    onPressed: _sincronizando ? null : _sincronizarPendientes,
+                    tooltip: 'Sincronizar $countPendientes pendientes',
                   ),
                 ),
               ],
-            ),
+            ],
           ),
-          // Lista de presupuestos
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _presupuestosFiltrados.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _searchController.text.isEmpty
-                              ? Icons.request_quote_outlined
-                              : Icons.search_off,
-                          size: 64,
-                          color: Colors.grey,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchController.text.isEmpty
-                              ? 'No hay presupuestos'
-                              : 'No se encontraron resultados',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(8),
-                    itemCount: _presupuestosFiltrados.length,
-                    itemBuilder: (context, index) {
-                      final presupuesto = _presupuestosFiltrados[index];
-                      final numeroPre = presupuesto['numero']?.toString() ?? '';
-                      final textoNumero = numeroPre.isNotEmpty
-                          ? numeroPre
-                          : 'Presupuesto #${presupuesto['id']}';
+        ),
 
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: InkWell(
-                          onTap: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => DetallePresupuestoScreen(
-                                  presupuesto: presupuesto,
-                                ),
+        // 2. Lista de Presupuestos
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _presupuestosFiltrados.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.request_quote_outlined,
+                        size: 64,
+                        color: Colors.grey,
+                      ),
+                      SizedBox(height: 16),
+                      Text(
+                        'No hay presupuestos',
+                        style: TextStyle(fontSize: 18, color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _presupuestosFiltrados.length,
+                  itemBuilder: (context, index) {
+                    final p = _presupuestosFiltrados[index];
+                    final numero = p['numero']?.toString().isNotEmpty == true
+                        ? '${p['numero']}'
+                        : 'Borrador #${p['id']}';
+                    final estado = _getNombreEstado(p['estado']);
+                    final colorEstado = _getColorEstado(p['estado']);
+
+                    // Usamos el total calculado
+                    final double totalMostrar = p['total_calculado'] ?? 0.0;
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  DetallePresupuestoScreen(presupuesto: p),
+                            ),
+                          );
+                          _cargarDatos();
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: ListTile(
+                            // Título con el número
+                            title: Text(
+                              numero,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
                               ),
-                            );
-                            _cargarDatos();
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Row(
+                            ),
+                            // Subtítulo con Cliente, Fecha y Estado
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Ícono de estado con badge debajo
-                                Column(
+                                const SizedBox(height: 4),
+                                Text(
+                                  _obtenerNombreCliente(p['cliente_id']),
+                                  style: TextStyle(color: Colors.grey[700]),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Row(
                                   children: [
-                                    Container(
-                                      width: 56,
-                                      height: 56,
-                                      decoration: BoxDecoration(
-                                        color: _getColorEstado(
-                                          presupuesto['estado'],
-                                        ).withOpacity(0.1),
-                                        shape: BoxShape.circle,
-                                      ),
-                                      child: Icon(
-                                        _getIconoEstado(presupuesto['estado']),
-                                        color: _getColorEstado(
-                                          presupuesto['estado'],
-                                        ),
-                                        size: 28,
+                                    Text(
+                                      _formatearFecha(p['fecha']),
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 13,
                                       ),
                                     ),
-                                    const SizedBox(height: 4),
+                                    const SizedBox(width: 8),
+                                    // Pequeño indicador de estado
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 6,
                                         vertical: 2,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: _getColorEstado(
-                                          presupuesto['estado'],
-                                        ).withOpacity(0.15),
-                                        borderRadius: BorderRadius.circular(6),
+                                        color: colorEstado.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(4),
                                       ),
                                       child: Text(
-                                        _getNombreEstado(presupuesto['estado']),
+                                        estado,
                                         style: TextStyle(
-                                          color: _getColorEstado(
-                                            presupuesto['estado'],
-                                          ),
+                                          color: colorEstado,
                                           fontSize: 10,
-                                          fontWeight: FontWeight.w600,
+                                          fontWeight: FontWeight.bold,
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(width: 16),
-                                // Información del presupuesto
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        textoNumero,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _obtenerNombreCliente(
-                                          presupuesto['cliente_id'],
-                                        ),
-                                        style: TextStyle(
-                                          color: Colors.grey[700],
-                                          fontSize: 14,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.calendar_today,
-                                            size: 14,
-                                            color: Colors.grey[600],
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            _formatearFecha(
-                                              presupuesto['fecha'],
-                                            ),
-                                            style: TextStyle(
-                                              color: Colors.grey[600],
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                // Flecha de navegación
-                                Icon(
-                                  Icons.chevron_right,
-                                  color: Colors.grey[400],
-                                ),
                               ],
+                            ),
+                            // Total Calculado (con IVA) a la derecha
+                            trailing: Text(
+                              '${totalMostrar.toStringAsFixed(2)}€',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                                color: Color(0xFF032458),
+                              ),
                             ),
                           ),
                         ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          final resultado = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const CrearPresupuestoScreen(),
-            ),
-          );
-          if (resultado == true) {
-            _cargarDatos();
-          }
-        },
-        backgroundColor: const Color(0xFF032458),
-        child: const Icon(Icons.add),
-      ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
-  }
-
-  String _obtenerNombreCliente(int? clienteId) {
-    if (clienteId == null) return 'Sin cliente';
-    return _clientesNombres[clienteId] ?? 'Cliente desconocido';
-  }
-
-  Future<void> _sincronizarPresupuestos() async {
-    setState(() => _sincronizando = true);
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      String url = prefs.getString('velneo_url') ?? '';
-      final String apiKey = prefs.getString('velneo_api_key') ?? '';
-
-      if (url.isEmpty || apiKey.isEmpty) {
-        throw Exception('Configura la URL y API Key en Configuración');
-      }
-
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://$url';
-      }
-
-      final apiService = VelneoAPIService(url, apiKey);
-      final db = DatabaseHelper.instance;
-
-      // Descargar TODOS los presupuestos (sin filtro de comercial)
-      final presupuestosLista = await apiService.obtenerPresupuestos();
-
-      await db.limpiarPresupuestos();
-      await db.insertarPresupuestosLote(
-        presupuestosLista.cast<Map<String, dynamic>>(),
-      );
-
-      // Descargar TODAS las líneas de presupuesto
-      final lineasPresupuesto = await apiService
-          .obtenerTodasLineasPresupuesto();
-      await db.insertarLineasPresupuestoLote(
-        lineasPresupuesto.cast<Map<String, dynamic>>(),
-      );
-
-      setState(() => _sincronizando = false);
-
-      // IMPORTANTE: Recargar los datos después de sincronizar
-      await _cargarDatos();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '✅ ${presupuestosLista.length} presupuestos sincronizados',
-          ),
-          backgroundColor: const Color(0xFF032458),
-        ),
-      );
-    } catch (e) {
-      setState(() => _sincronizando = false);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
-          backgroundColor: const Color(0xFFF44336),
-        ),
-      );
-    }
   }
 }

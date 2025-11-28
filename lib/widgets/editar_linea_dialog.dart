@@ -6,7 +6,7 @@ class EditarLineaDialog extends StatefulWidget {
   final Map<String, dynamic> articulo;
   final double cantidad;
   final double precio;
-  final double descuento; // Descuento General
+  final double descuento;
   final double dto1;
   final double dto2;
   final double dto3;
@@ -40,18 +40,27 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
   @override
   void initState() {
     super.initState();
+    // Mostrar con comas para facilitar la lectura
     _cantidadController = TextEditingController(
-      text: widget.cantidad.toString(),
+      text: widget.cantidad.toString().replaceAll('.', ','),
     );
-    _precioController = TextEditingController(text: widget.precio.toString());
-
-    // 🟢 Inicializamos los 4 controladores
+    _precioController = TextEditingController(
+      text: widget.precio.toString().replaceAll('.', ','),
+    );
     _descuentoController = TextEditingController(
-      text: widget.descuento.toString(),
+      text: widget.descuento == 0
+          ? ''
+          : widget.descuento.toString().replaceAll('.', ','),
     );
-    _dto1Controller = TextEditingController(text: widget.dto1.toString());
-    _dto2Controller = TextEditingController(text: widget.dto2.toString());
-    _dto3Controller = TextEditingController(text: widget.dto3.toString());
+    _dto1Controller = TextEditingController(
+      text: widget.dto1 == 0 ? '' : widget.dto1.toString().replaceAll('.', ','),
+    );
+    _dto2Controller = TextEditingController(
+      text: widget.dto2 == 0 ? '' : widget.dto2.toString().replaceAll('.', ','),
+    );
+    _dto3Controller = TextEditingController(
+      text: widget.dto3 == 0 ? '' : widget.dto3.toString().replaceAll('.', ','),
+    );
 
     _tipoIvaSeleccionado = widget.tipoIva;
     _cargarConfiguracionIva();
@@ -59,9 +68,7 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
 
   Future<void> _cargarConfiguracionIva() async {
     await IvaConfig.cargarConfiguracion();
-    if (mounted) {
-      setState(() {});
-    }
+    if (mounted) setState(() {});
   }
 
   @override
@@ -75,6 +82,13 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
     super.dispose();
   }
 
+  // Helper: Convierte texto con coma o punto a double
+  double _parseValue(String text) {
+    if (text.isEmpty) return 0.0;
+    String sanitized = text.replaceAll(',', '.');
+    return double.tryParse(sanitized) ?? 0.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -85,16 +99,14 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.articulo['nombre'],
+              widget.articulo['nombre'] ?? 'Artículo',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             Text(
-              widget.articulo['codigo'],
+              widget.articulo['codigo'] ?? '',
               style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
             const SizedBox(height: 24),
-
-            // Fila Cantidad y Precio
             Row(
               children: [
                 Expanded(
@@ -125,12 +137,10 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
               ],
             ),
             const SizedBox(height: 16),
-
-            // 🟢 Descuento General
             TextField(
               controller: _descuentoController,
               decoration: const InputDecoration(
-                labelText: 'Descuento General (%)',
+                labelText: 'Descuento (%)',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.percent),
               ),
@@ -139,10 +149,8 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
               ),
             ),
             const SizedBox(height: 16),
-
-            // 🟢 Fila de Descuentos Adicionales
             const Text(
-              'Descuentos Adicionales (%)',
+              'Descuentos Cascada (%)',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 4),
@@ -189,9 +197,8 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
               ],
             ),
             const SizedBox(height: 16),
-
             DropdownButtonFormField<String>(
-              initialValue: _tipoIvaSeleccionado,
+              value: _tipoIvaSeleccionado,
               decoration: const InputDecoration(
                 labelText: 'Tipo de IVA',
                 border: OutlineInputBorder(),
@@ -202,11 +209,7 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
                   child: Text(IvaConfig.obtenerNombre(tipo)),
                 );
               }).toList(),
-              onChanged: (valor) {
-                setState(() {
-                  _tipoIvaSeleccionado = valor!;
-                });
-              },
+              onChanged: (v) => setState(() => _tipoIvaSeleccionado = v!),
             ),
           ],
         ),
@@ -218,23 +221,16 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            final cantidad = double.tryParse(_cantidadController.text) ?? 1;
-            final precio = double.tryParse(_precioController.text) ?? 0;
-            final descuento = double.tryParse(_descuentoController.text) ?? 0;
-            final d1 = double.tryParse(_dto1Controller.text) ?? 0;
-            final d2 = double.tryParse(_dto2Controller.text) ?? 0;
-            final d3 = double.tryParse(_dto3Controller.text) ?? 0;
-
             Navigator.pop(
               context,
               LineaPedidoData(
                 articulo: widget.articulo,
-                cantidad: cantidad,
-                precio: precio,
-                descuento: descuento, // Guardamos el descuento general
-                dto1: d1,
-                dto2: d2,
-                dto3: d3,
+                cantidad: _parseValue(_cantidadController.text),
+                precio: _parseValue(_precioController.text),
+                descuento: _parseValue(_descuentoController.text),
+                dto1: _parseValue(_dto1Controller.text),
+                dto2: _parseValue(_dto2Controller.text),
+                dto3: _parseValue(_dto3Controller.text),
                 tipoIva: _tipoIvaSeleccionado,
               ),
             );

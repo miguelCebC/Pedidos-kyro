@@ -1352,76 +1352,69 @@ class VelneoAPIService {
         _log('  📥 Página $page - URL: $url');
 
         try {
-          final response = await _getWithSSL(
-            url,
-          ).timeout(const Duration(seconds: 45));
+          final allLineas = <dynamic>[];
+          int page = 1;
+          const int pageSize = 2000;
 
-          _log('  📥 Status code: ${response.statusCode}');
+          _log('📄 Descargando TODAS las líneas de pedido...');
 
-          if (response.statusCode == 200) {
-            final data = json.decode(response.body);
+          while (true) {
+            final url = _buildUrlWithParams('/VTA_PED_LIN_G', {
+              'page[number]': page.toString(),
+              'page[size]': pageSize.toString(),
+            });
 
-            if (data['total_count'] != null) {
-              totalCount = data['total_count'];
-              _log('  📊 Total registros en servidor: $totalCount');
-            }
+            try {
+              final response = await _getWithSSL(
+                url,
+              ).timeout(const Duration(seconds: 90));
+              if (response.statusCode == 200) {
+                final data = json.decode(response.body);
+                final listaRaw = data['vta_ped_lin_g'] ?? data['VTA_PED_LIN_G'];
 
-            if (data['vta_ped_lin_g'] != null &&
-                data['vta_ped_lin_g'] is List) {
-              final lineasList = (data['vta_ped_lin_g'] as List).map((linea) {
-                return {
-                  'pedido_id': linea['vta_ped'] ?? 0,
-                  'articulo_id': linea['art'] ?? 0,
-                  'cantidad': _convertirADouble(linea['can_ped']),
-                  'precio': _convertirADouble(linea['pre']),
-                  'por_descuento': _convertirADouble(linea['por_dto']),
-                  'dto1': _convertirADouble(linea['dto1']),
-                  'dto2': _convertirADouble(linea['dto2']),
-                  'dto3': _convertirADouble(linea['dto3']),
-                  'por_iva': _convertirADouble(linea['iva_pje']),
-                  'tipo_iva': linea['reg_iva_vta'] ?? 'G',
-                };
-              }).toList();
-              if (lineasList.isEmpty) {
-                _log('  🏁 No hay más líneas de pedido');
-                break;
+                if (listaRaw != null && listaRaw is List) {
+                  if (listaRaw.isEmpty) break;
+                  final lineasList = listaRaw.map((linea) {
+                    return {
+                      'id': linea['id'] ?? linea['ID'],
+                      'pedido_id': linea['vta_ped'] ?? linea['VTA_PED'] ?? 0,
+                      'articulo_id': linea['art'] ?? linea['ART'] ?? 0,
+                      'cantidad': _convertirADouble(
+                        linea['can_ped'] ?? linea['CAN_PED'],
+                      ),
+                      'precio': _convertirADouble(linea['pre'] ?? linea['PRE']),
+                      'por_descuento': _convertirADouble(
+                        linea['por_dto'] ?? linea['POR_DTO'],
+                      ),
+                      'dto1': _convertirADouble(linea['dto1'] ?? linea['DTO1']),
+                      'dto2': _convertirADouble(linea['dto2'] ?? linea['DTO2']),
+                      'dto3': _convertirADouble(linea['dto3'] ?? linea['DTO3']),
+                      'por_iva': _convertirADouble(
+                        linea['iva_pje'] ?? linea['IVA_PJE'],
+                      ),
+                      'tipo_iva':
+                          linea['reg_iva_vta'] ?? linea['REG_IVA_VTA'] ?? 'G',
+                    };
+                  }).toList();
+                  allLineas.addAll(lineasList);
+                  if (listaRaw.length < pageSize) break;
+                  page++;
+                  await Future.delayed(const Duration(milliseconds: 200));
+                } else {
+                  break;
+                }
+              } else {
+                throw Exception('HTTP ${response.statusCode}');
               }
-
-              allLineas.addAll(lineasList);
-              _log(
-                '  ✅ Página $page: ${lineasList.length} líneas (Acumulado: ${allLineas.length}/$totalCount)',
-              );
-
-              if (lineasList.length < pageSize) {
-                _log('  🏁 Última página (${lineasList.length} < $pageSize)');
-                break;
-              }
-
-              if (totalCount > 0 && allLineas.length >= totalCount) {
-                _log(
-                  '  🏁 Total alcanzado (${allLineas.length} >= $totalCount)',
-                );
-                break;
-              }
-
-              page++;
-              await Future.delayed(const Duration(milliseconds: 200));
-            } else {
-              _log('  ⚠️ No se encontraron líneas de pedido');
+            } catch (e) {
               break;
             }
-          } else {
-            throw Exception('Error HTTP ${response.statusCode}');
           }
+          return allLineas;
         } catch (e) {
-          _log('  ❌ Error en página $page: $e');
-          if (allLineas.isEmpty) {
-            rethrow;
-          }
-          break;
+          return [];
         }
       }
-
       _log('✅ TOTAL líneas de pedido descargadas: ${allLineas.length}');
       return allLineas;
     } catch (e) {

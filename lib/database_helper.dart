@@ -27,8 +27,6 @@ class DatabaseHelper {
   }
 
   Future _createDB(Database db, int version) async {
-    print('🔨 Creando base de datos versión $version');
-
     await db.execute('''
       CREATE TABLE clientes (
         id INTEGER PRIMARY KEY,
@@ -42,220 +40,77 @@ class DatabaseHelper {
         nom_com TEXT         
       )
     ''');
-
+    // ... (Resto de tablas existentes igual que antes: articulos, usuarios, series, etc.)
     await db.execute('''
-  CREATE TABLE articulos (
-    id INTEGER PRIMARY KEY,
-    codigo TEXT NOT NULL,
-    nombre TEXT NOT NULL,
-    descripcion TEXT,
-    precio REAL NOT NULL,
-    stock INTEGER DEFAULT 0,
-    img TEXT,  
-    familia TEXT,        
-    proveedor_id INTEGER, 
-    codigo_barras TEXT,    
-    off INTEGER DEFAULT 0
-  )
-''');
-    await db.execute('''
-      CREATE TABLE usuarios (
+      CREATE TABLE articulos (
         id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        ent INTEGER
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE series (
-        id INTEGER PRIMARY KEY,
+        codigo TEXT NOT NULL,
         nombre TEXT NOT NULL,
-        tipo TEXT
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE comerciales (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        email TEXT,
-        telefono TEXT,
-        direccion TEXT
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE provincias (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        prefijo_cp TEXT,
-        pais INTEGER
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE zonas_tecnicas (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        observaciones TEXT,
-        tecnico_id INTEGER
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE poblaciones (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        km INTEGER,
-        zona_tecnica_id INTEGER,
-        codigo_postal TEXT,
-        FOREIGN KEY (zona_tecnica_id) REFERENCES zonas_tecnicas (id)
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE campanas_comerciales (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        fecha_inicio TEXT,
-        fecha_fin TEXT,
-        sector INTEGER,
-        provincia_id INTEGER,
-        poblacion_id INTEGER
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE tipos_visita (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE leads (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT,
-        fecha_alta TEXT,
-        campana_id INTEGER,
-        cliente_id INTEGER,
-        asunto TEXT,
         descripcion TEXT,
-        comercial_id INTEGER,
-        estado TEXT,
-        fecha TEXT,
-        enviado INTEGER DEFAULT 0,
-        agendado INTEGER DEFAULT 0,
-        agenda_id INTEGER,
-        FOREIGN KEY (campana_id) REFERENCES campanas_comerciales (id),
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (comercial_id) REFERENCES comerciales (id)
-      )
-    ''');
-    await db.execute('''
-        CREATE TABLE contactos (
-          id INTEGER PRIMARY KEY,
-          cliente_id INTEGER NOT NULL, -- Campo 'ent'
-          tipo TEXT,                   -- Campo 'ctt_clf' (T, E, F)
-          nombre TEXT,                 -- Campo 'name' (TELÉFONO, FAX...)
-          valor TEXT,                  -- Campo 'val' (El número o email)
-          es_principal INTEGER DEFAULT 0 -- Campo 'prn'
-        )
-      ''');
-    await db.execute('''
-      CREATE TABLE direcciones (
-        id INTEGER PRIMARY KEY,
-        ent INTEGER,
-        direccion TEXT
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE agenda (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT,
-        cliente_id INTEGER,
-        direccion_id INTEGER, -- Nuevo campo
-        tipo_visita INTEGER,
-        asunto TEXT,
-        comercial_id INTEGER,
-        campana_id INTEGER,
-        fecha_inicio TEXT,
-        hora_inicio TEXT,
-        fecha_fin TEXT,
-        hora_fin TEXT,
-        fecha_proxima_visita TEXT,
-        hora_proxima_visita TEXT,
-        descripcion TEXT,
-        todo_dia INTEGER DEFAULT 0,
-        lead_id INTEGER,
-        presupuesto_id INTEGER,
-        generado INTEGER DEFAULT 1,
-        sincronizado INTEGER DEFAULT 0,
-        no_gen_pro_vis INTEGER DEFAULT 0, 
-        no_gen_tri INTEGER DEFAULT 0,     
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (direccion_id) REFERENCES direcciones (id),
-        FOREIGN KEY (comercial_id) REFERENCES comerciales (id),
-        FOREIGN KEY (campana_id) REFERENCES campanas_comerciales (id),
-        FOREIGN KEY (lead_id) REFERENCES leads (id)
-      )
-    ''');
-    // TABLA PEDIDOS CON NUEVO CAMPO
-    await db.execute('''
-      CREATE TABLE pedidos (
-        id INTEGER PRIMARY KEY,
-        cliente_id INTEGER NOT NULL,
-        usuario_id INTEGER,
-        cmr INTEGER,
-        serie_id INTEGER, 
-        fecha TEXT NOT NULL,
-        numero TEXT, 
-        num_doc INTEGER,      
-        fecha_entrega TEXT,   
-        forma_pago INTEGER,
-        direccion_entrega_id INTEGER,
-        estado TEXT,
-        con_kyr INTEGER DEFAULT 0, 
-        observaciones TEXT,
-        total REAL,
-        sincronizado INTEGER DEFAULT 0,
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (cmr) REFERENCES comerciales (id),
-        FOREIGN KEY (serie_id) REFERENCES series (id)
-      )
-    ''');
-
-    // TABLA LINEAS PEDIDO CON DTOS 1, 2, 3
-    await db.execute('''
-      CREATE TABLE lineas_pedido (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        pedido_id INTEGER NOT NULL,
-        articulo_id INTEGER NOT NULL,
-        cantidad REAL NOT NULL,
         precio REAL NOT NULL,
-        por_descuento REAL DEFAULT 0,
-        dto1 REAL DEFAULT 0, -- 🟢 NUEVO
-        dto2 REAL DEFAULT 0, -- 🟢 NUEVO
-        dto3 REAL DEFAULT 0, -- 🟢 NUEVO
-        por_iva REAL DEFAULT 0,
-        tipo_iva TEXT DEFAULT 'G',
-        FOREIGN KEY (pedido_id) REFERENCES pedidos (id),
-        FOREIGN KEY (articulo_id) REFERENCES articulos (id)
+        stock INTEGER DEFAULT 0,
+        img TEXT,  
+        familia TEXT,        
+        proveedor_id INTEGER, 
+        codigo_barras TEXT,    
+        off INTEGER DEFAULT 0
       )
     ''');
     await db.execute('''
-    CREATE TABLE formas_pago (
-      id INTEGER PRIMARY KEY,
-      nombre TEXT NOT NULL
-    )
+      CREATE TABLE usuarios (id INTEGER PRIMARY KEY, name TEXT, ent INTEGER)
+    ''');
+    await db.execute('''
+      CREATE TABLE series (id INTEGER PRIMARY KEY, nombre TEXT, tipo TEXT)
+    ''');
+    await db.execute('''
+      CREATE TABLE comerciales (id INTEGER PRIMARY KEY, nombre TEXT, email TEXT, telefono TEXT, direccion TEXT)
+    ''');
+    await db.execute('''
+      CREATE TABLE provincias (id INTEGER PRIMARY KEY, nombre TEXT, prefijo_cp TEXT, pais INTEGER)
+    ''');
+    await db.execute('''
+      CREATE TABLE zonas_tecnicas (id INTEGER PRIMARY KEY, nombre TEXT, observaciones TEXT, tecnico_id INTEGER)
+    ''');
+    await db.execute('''
+      CREATE TABLE poblaciones (id INTEGER PRIMARY KEY, nombre TEXT, km INTEGER, zona_tecnica_id INTEGER, codigo_postal TEXT)
+    ''');
+    await db.execute('''
+      CREATE TABLE campanas_comerciales (id INTEGER PRIMARY KEY, nombre TEXT, fecha_inicio TEXT, fecha_fin TEXT, sector INTEGER, provincia_id INTEGER, poblacion_id INTEGER)
+    ''');
+    await db.execute('''
+      CREATE TABLE tipos_visita (id INTEGER PRIMARY KEY, nombre TEXT)
+    ''');
+    await db.execute('''
+      CREATE TABLE leads (id INTEGER PRIMARY KEY, nombre TEXT, fecha_alta TEXT, campana_id INTEGER, cliente_id INTEGER, asunto TEXT, descripcion TEXT, comercial_id INTEGER, estado TEXT, fecha TEXT, enviado INTEGER DEFAULT 0, agendado INTEGER DEFAULT 0, agenda_id INTEGER)
+    ''');
+    await db.execute('''
+      CREATE TABLE contactos (id INTEGER PRIMARY KEY, cliente_id INTEGER, tipo TEXT, nombre TEXT, valor TEXT, es_principal INTEGER DEFAULT 0)
+    ''');
+    await db.execute('''
+      CREATE TABLE direcciones (id INTEGER PRIMARY KEY, ent INTEGER, direccion TEXT)
+    ''');
+    await db.execute('''
+      CREATE TABLE agenda (id INTEGER PRIMARY KEY, nombre TEXT, cliente_id INTEGER, direccion_id INTEGER, tipo_visita INTEGER, asunto TEXT, comercial_id INTEGER, campana_id INTEGER, fecha_inicio TEXT, hora_inicio TEXT, fecha_fin TEXT, hora_fin TEXT, fecha_proxima_visita TEXT, hora_proxima_visita TEXT, descripcion TEXT, todo_dia INTEGER DEFAULT 0, lead_id INTEGER, presupuesto_id INTEGER, generado INTEGER DEFAULT 1, sincronizado INTEGER DEFAULT 0, no_gen_pro_vis INTEGER DEFAULT 0, no_gen_tri INTEGER DEFAULT 0)
+    ''');
+    await db.execute('''
+      CREATE TABLE pedidos (id INTEGER PRIMARY KEY, cliente_id INTEGER, usuario_id INTEGER, cmr INTEGER, serie_id INTEGER, fecha TEXT, numero TEXT, num_doc INTEGER, fecha_entrega TEXT, forma_pago INTEGER, direccion_entrega_id INTEGER, estado TEXT, con_kyr INTEGER DEFAULT 0, observaciones TEXT, total REAL, sincronizado INTEGER DEFAULT 0)
+    ''');
+    await db.execute('''
+      CREATE TABLE lineas_pedido (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER, articulo_id INTEGER, cantidad REAL, precio REAL, por_descuento REAL DEFAULT 0, dto1 REAL DEFAULT 0, dto2 REAL DEFAULT 0, dto3 REAL DEFAULT 0, por_iva REAL DEFAULT 0, tipo_iva TEXT DEFAULT 'G')
+    ''');
+    await db.execute('''
+      CREATE TABLE formas_pago (id INTEGER PRIMARY KEY, nombre TEXT)
     ''');
 
-    // 🟢 Añadido serie_id a presupuestos
+    // TABLA PRESUPUESTOS ACTUALIZADA
     await db.execute('''
       CREATE TABLE IF NOT EXISTS presupuestos (
         id INTEGER PRIMARY KEY,
-        cliente_id INTEGER NOT NULL,
+        cliente_id INTEGER,
         comercial_id INTEGER,
         usuario_id INTEGER,
         serie_id INTEGER,
-        fecha TEXT NOT NULL,
+        fecha TEXT,
         numero TEXT,
         estado TEXT,
         observaciones TEXT,
@@ -265,74 +120,42 @@ class DatabaseHelper {
         fecha_validez TEXT,
         fecha_aceptacion TEXT,
         sincronizado INTEGER DEFAULT 0,
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (comercial_id) REFERENCES comerciales (id),
-        FOREIGN KEY (serie_id) REFERENCES series (id)
+        direccion_entrega_id INTEGER,
+        forma_pago INTEGER -- 🟢
       )
     ''');
 
     await db.execute('''
       CREATE TABLE IF NOT EXISTS lineas_presupuesto (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        presupuesto_id INTEGER NOT NULL,
-        articulo_id INTEGER NOT NULL,
-        cantidad REAL NOT NULL,
-        precio REAL NOT NULL,
+        presupuesto_id INTEGER,
+        articulo_id INTEGER,
+        cantidad REAL,
+        precio REAL,
         por_descuento REAL DEFAULT 0,
         por_iva REAL DEFAULT 0,
         tipo_iva TEXT DEFAULT 'G',
-        FOREIGN KEY (presupuesto_id) REFERENCES presupuestos (id),
-        FOREIGN KEY (articulo_id) REFERENCES articulos (id)
+        dto1 REAL DEFAULT 0,
+        dto2 REAL DEFAULT 0,
+        dto3 REAL DEFAULT 0
       )
     ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS tarifas_cliente (
-        id INTEGER PRIMARY KEY,
-        cliente_id INTEGER NOT NULL,
-        articulo_id INTEGER NOT NULL,
-        precio REAL NOT NULL,
-        por_descuento REAL DEFAULT 0,
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (articulo_id) REFERENCES articulos (id)
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE familias (
-        id INTEGER PRIMARY KEY,
-        nombre TEXT NOT NULL
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS tarifas_articulo (
-        id INTEGER PRIMARY KEY,
-        articulo_id INTEGER NOT NULL,
-        nombre_tarifa TEXT,
-        precio REAL NOT NULL,
-        por_descuento REAL DEFAULT 0,
-        FOREIGN KEY (articulo_id) REFERENCES articulos (id)
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE config_local (
-        clave TEXT PRIMARY KEY,
-        valor TEXT
-      )
-    ''');
-    await db.execute('''
-      CREATE TABLE movimientos (
-        id INTEGER PRIMARY KEY,
-        cliente_id INTEGER,
-        articulo_id INTEGER,
-        fecha TEXT,
-        num_doc TEXT,
-        entrada REAL,
-        salida REAL,
-        precio REAL,
-        FOREIGN KEY (cliente_id) REFERENCES clientes (id),
-        FOREIGN KEY (articulo_id) REFERENCES articulos (id)
-      )
-    ''');
-    print('✅ Base de datos creada correctamente');
+    // ... otras tablas (tarifas, familias, config_local, movimientos)
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS tarifas_cliente (id INTEGER PRIMARY KEY, cliente_id INTEGER, articulo_id INTEGER, precio REAL, por_descuento REAL)',
+    );
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS familias (id INTEGER PRIMARY KEY, nombre TEXT)',
+    );
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS tarifas_articulo (id INTEGER PRIMARY KEY, articulo_id INTEGER, nombre_tarifa TEXT, precio REAL, por_descuento REAL)',
+    );
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS config_local (clave TEXT PRIMARY KEY, valor TEXT)',
+    );
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY, cliente_id INTEGER, articulo_id INTEGER, fecha TEXT, num_doc TEXT, entrada REAL, salida REAL, precio REAL)',
+    );
   }
 
   Future<void> insertarMovimientosLote(

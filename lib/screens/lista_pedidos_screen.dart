@@ -16,10 +16,9 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
   List<Map<String, dynamic>> _pedidos = [];
   List<Map<String, dynamic>> _pedidosFiltrados = [];
 
-  // 🟢 NUEVO: Mapa para guardar nombres de clientes (ID -> Nombre)
   final Map<int, String> _clientesNombres = {};
-
   final TextEditingController _searchController = TextEditingController();
+
   bool _isLoading = true;
   bool _sincronizando = false;
 
@@ -27,35 +26,7 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
   void initState() {
     super.initState();
     _cargarPedidos();
-    // Sync fondo
-    WidgetsBinding.instance.addPostFrameCallback((_) => _sincronizarFondo());
     _searchController.addListener(_filtrarPedidos);
-  }
-
-  Future<void> _sincronizarFondo() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final url = prefs.getString('velneo_url');
-      final key = prefs.getString('velneo_api_key');
-      final comercialId = prefs.getInt('comercial_id');
-      if (url == null) return;
-
-      final api = VelneoAPIService(
-        url.startsWith('http') ? url : 'https://$url',
-        key!,
-      );
-      final pedidos = await api.obtenerPedidos(comercialId);
-
-      if (pedidos.isNotEmpty) {
-        await DatabaseHelper.instance.insertarPedidosLote(pedidos.cast());
-        await DatabaseHelper.instance.insertarLineasPedidoLote(
-          (await api.obtenerTodasLineasPedido()).cast(),
-        );
-        if (mounted) _cargarPedidos();
-      }
-    } catch (e) {
-      print("Error sync pedidos: $e");
-    }
   }
 
   @override
@@ -73,33 +44,53 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
       final comercialId = prefs.getInt('comercial_id');
       final db = DatabaseHelper.instance;
 
-      // 1. Cargar Pedidos
-      var pedidos = await db.obtenerPedidos();
+      var pedidosRaw = await db.obtenerPedidos();
       if (comercialId != null) {
-        pedidos = pedidos.where((p) => p['cmr'] == comercialId).toList();
+        pedidosRaw = pedidosRaw.where((p) => p['cmr'] == comercialId).toList();
       }
 
-      // 🟢 2. Cargar Clientes para obtener nombres
       final clientes = await db.obtenerClientes();
       _clientesNombres.clear();
-      for (var c in clientes) {
-        _clientesNombres[c['id']] = c['nombre'];
+      for (var c in clientes) _clientesNombres[c['id']] = c['nombre'];
+
+      final List<Map<String, dynamic>> pedidosCalculados = [];
+      for (var p in pedidosRaw) {
+        final lineas = await db.obtenerLineasPedido(p['id']);
+        double totalReal = 0.0;
+        for (var l in lineas) {
+          final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
+          final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
+          final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
+
+          double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
+          double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
+          double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
+          double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
+
+          double precioNeto = prec;
+          if (dto > 0) precioNeto *= (1 - dto / 100);
+          if (d1 > 0) precioNeto *= (1 - d1 / 100);
+          if (d2 > 0) precioNeto *= (1 - d2 / 100);
+          if (d3 > 0) precioNeto *= (1 - d3 / 100);
+
+          totalReal += (precioNeto * cant) * (1 + iva / 100);
+        }
+        final pMod = Map<String, dynamic>.from(p);
+        pMod['total_calculado'] = totalReal;
+        pedidosCalculados.add(pMod);
       }
 
       setState(() {
-        _pedidos = pedidos;
-        _pedidosFiltrados = pedidos;
+        _pedidos = pedidosCalculados;
+        _pedidosFiltrados = pedidosCalculados;
         _isLoading = false;
       });
-
-      // Reaplicar filtro si hay búsqueda activa
       if (_searchController.text.isNotEmpty) _filtrarPedidos();
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // 🟢 Helper para obtener nombre
   String _obtenerNombreCliente(int? id) {
     if (id == null) return 'Cliente desconocido';
     return _clientesNombres[id] ?? 'Cliente no encontrado ($id)';
@@ -114,31 +105,30 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
     setState(() {
       _pedidosFiltrados = _pedidos.where((p) {
         final n = (p['numero'] ?? '').toString().toLowerCase();
-        final o = (p['observaciones'] ?? '').toString().toLowerCase();
-        final i = p['id'].toString();
-        // 🟢 Buscar también por nombre de cliente
         final c = _obtenerNombreCliente(p['cliente_id']).toLowerCase();
-
-        return n.contains(query) ||
-            o.contains(query) ||
-            i.contains(query) ||
-            c.contains(query);
+        return n.contains(query) || c.contains(query);
       }).toList();
     });
   }
 
-  String _fmtFecha(String f) {
+  String _formatearFecha(String? fecha) {
+    if (fecha == null || fecha.isEmpty) return '-';
     try {
-      final d = DateTime.parse(f);
-      return '${d.day}/${d.month}/${d.year}';
+      final dt = DateTime.parse(fecha);
+      return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
     } catch (e) {
-      return f;
+      return fecha;
     }
   }
 
   Future<void> _sincronizarPendientes() async {
     final pendientes = _pedidos.where((p) => p['sincronizado'] == 0).toList();
-    if (pendientes.isEmpty) return;
+    if (pendientes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay pedidos pendientes')),
+      );
+      return;
+    }
 
     setState(() => _sincronizando = true);
     try {
@@ -146,6 +136,7 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
       final url = prefs.getString('velneo_url');
       final key = prefs.getString('velneo_api_key');
       if (url == null) return;
+
       final api = VelneoAPIService(
         url.startsWith('http') ? url : 'https://$url',
         key!,
@@ -155,16 +146,14 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
       for (var p in pendientes) {
         final lineas = await db.obtenerLineasPedido(p['id']);
 
-        // Preparar datos (incluyendo dirección si existe en local)
         final pedidoMap = {
           'cliente_id': p['cliente_id'],
           'fecha': p['fecha'],
           'observaciones': p['observaciones'],
-          'total': p['total'],
+          'total': p['total_calculado'],
           'cmr': p['cmr'],
           'serie_id': p['serie_id'],
-          'direccion_entrega_id':
-              p['direccion_entrega_id'], // 🟢 Enviar dirección
+          'direccion_entrega_id': p['direccion_entrega_id'],
           'lineas': lineas
               .map(
                 (l) => {
@@ -185,9 +174,9 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
       }
       await _cargarPedidos();
       if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Sincronización exitosa')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sincronización completada')),
+        );
     } catch (e) {
       if (mounted)
         ScaffoldMessenger.of(
@@ -201,17 +190,29 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
   @override
   Widget build(BuildContext context) {
     final int count = _pedidos.where((p) => p['sincronizado'] == 0).length;
+
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.all(12.0),
+        // Barra Superior
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
-                    hintText: 'Buscar pedido...', // 🟢 Texto actualizado
+                    hintText: 'Buscar pedido...',
                     prefixIcon: const Icon(Icons.search),
                     filled: true,
                     fillColor: Colors.grey[100],
@@ -224,7 +225,7 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                 ),
               ),
               if (count > 0) ...[
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Container(
                   decoration: BoxDecoration(
                     color: const Color(0xFF032458),
@@ -242,85 +243,89 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                           )
                         : const Icon(Icons.cloud_upload, color: Colors.white),
                     onPressed: _sincronizando ? null : _sincronizarPendientes,
+                    tooltip: 'Sincronizar $count pendientes',
                   ),
                 ),
               ],
             ],
           ),
         ),
+
+        // Lista Limpia
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: _cargarPedidos,
-                  child: ListView.builder(
-                    itemCount: _pedidosFiltrados.length,
-                    itemBuilder: (ctx, i) {
-                      final p = _pedidosFiltrados[i];
-                      final sync = p['sincronizado'] == 1;
+              : _pedidosFiltrados.isEmpty
+              ? const Center(child: Text('No hay pedidos'))
+              : ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _pedidosFiltrados.length,
+                  itemBuilder: (context, index) {
+                    final p = _pedidosFiltrados[index];
 
-                      // 🟢 Obtener nombre cliente
-                      final nombreCliente = _obtenerNombreCliente(
-                        p['cliente_id'],
-                      );
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            p['numero']?.toString().isNotEmpty == true
-                                ? '${p['numero']}'
-                                : 'Pedido #${p['id']}',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          // 🟢 SUBTÍTULO MEJORADO CON NOMBRE CLIENTE
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                nombreCliente,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                              Text('${_fmtFecha(p['fecha'])}'),
-                              if (p['observaciones'] != null &&
-                                  p['observaciones'].toString().isNotEmpty)
-                                Text(
-                                  p['observaciones'],
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                            ],
-                          ),
-                          trailing: Text(
-                            '${p['total']?.toStringAsFixed(2) ?? "0.00"}€',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          onTap: () => Navigator.push(
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () async {
+                          await Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (_) => DetallePedidoScreen(pedido: p),
                             ),
-                          ).then((_) => _cargarPedidos()),
+                          );
+                          _cargarPedidos();
+                        },
+                        // 🟢 DISEÑO LIMPIO
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: ListTile(
+                            title: Text(
+                              p['numero']?.toString().isNotEmpty == true
+                                  ? '${p['numero']}'
+                                  : 'Borrador #${p['id']}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 4),
+                                Text(
+                                  _obtenerNombreCliente(p['cliente_id']),
+                                  style: TextStyle(color: Colors.grey[700]),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _formatearFecha(p['fecha']),
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            trailing: Text(
+                              '${(p['total_calculado'] ?? 0.0).toStringAsFixed(2)}€',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                                color: Color(0xFF032458),
+                              ),
+                            ),
+                          ),
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 ),
         ),
       ],
