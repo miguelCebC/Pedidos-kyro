@@ -62,23 +62,29 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
         _clientesNombres[cliente['id'] as int] = cliente['nombre'] as String;
       }
 
-      // 🟢 3. RECALCULAR TOTALES CON IVA Y DESCUENTOS (Línea a Línea)
+      // 🟢 3. RECALCULAR TOTALES CON IVA Y DESCUENTOS - VERSIÓN CORREGIDA
       final List<Map<String, dynamic>> presupuestosCalculados = [];
 
       for (var p in presupuestosRaw) {
         final lineas = await db.obtenerLineasPresupuesto(p['id']);
-        double totalReal = 0.0;
+        double baseTotal = 0.0;
+        double ivaTotal = 0.0;
 
         for (var l in lineas) {
           final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
           final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
           final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
 
-          // Descuentos
+          // Descuentos en cascada
           double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
           double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
           double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
           double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
+
+          // 🔥 DEBUG: Imprimir valores para verificar
+          print(
+            'Línea: cant=$cant, prec=$prec, iva=$iva%, dto=$dto%, d1=$d1%, d2=$d2%, d3=$d3%',
+          );
 
           // Cálculo Neto con descuentos en cascada
           double precioNeto = prec;
@@ -87,16 +93,29 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
           if (d2 > 0) precioNeto *= (1 - d2 / 100);
           if (d3 > 0) precioNeto *= (1 - d3 / 100);
 
-          // Base imponible de la línea
+          print('  → Precio neto después descuentos: $precioNeto');
+
+          // Base imponible de la línea (sin IVA)
           double baseLinea = precioNeto * cant;
 
-          // Sumar al total (Base + IVA)
-          totalReal += baseLinea * (1 + iva / 100);
+          // IVA de la línea
+          double ivaLinea = baseLinea * (iva / 100);
+
+          print('  → Base línea: $baseLinea, IVA línea: $ivaLinea');
+
+          baseTotal += baseLinea;
+          ivaTotal += ivaLinea;
         }
 
-        // Crear una copia modificable del presupuesto con el nuevo total
+        print(
+          '📊 Presupuesto ${p['id']}: Base=$baseTotal, IVA=$ivaTotal, Total=${baseTotal + ivaTotal}',
+        );
+
+        // Crear una copia modificable del presupuesto con los nuevos totales
         final pMod = Map<String, dynamic>.from(p);
-        pMod['total_calculado'] = totalReal;
+        pMod['base_calculada'] = baseTotal;
+        pMod['iva_calculado'] = ivaTotal;
+        pMod['total_calculado'] = baseTotal + ivaTotal;
         presupuestosCalculados.add(pMod);
       }
 

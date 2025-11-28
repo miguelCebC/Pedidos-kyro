@@ -53,30 +53,64 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
       _clientesNombres.clear();
       for (var c in clientes) _clientesNombres[c['id']] = c['nombre'];
 
+      // 🟢 USAR TOTALES DE VELNEO (ya vienen calculados correctamente)
       final List<Map<String, dynamic>> pedidosCalculados = [];
+
       for (var p in pedidosRaw) {
-        final lineas = await db.obtenerLineasPedido(p['id']);
-        double totalReal = 0.0;
-        for (var l in lineas) {
-          final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
-          final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
-          final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
-
-          double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
-          double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
-          double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
-          double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
-
-          double precioNeto = prec;
-          if (dto > 0) precioNeto *= (1 - dto / 100);
-          if (d1 > 0) precioNeto *= (1 - d1 / 100);
-          if (d2 > 0) precioNeto *= (1 - d2 / 100);
-          if (d3 > 0) precioNeto *= (1 - d3 / 100);
-
-          totalReal += (precioNeto * cant) * (1 + iva / 100);
-        }
         final pMod = Map<String, dynamic>.from(p);
-        pMod['total_calculado'] = totalReal;
+
+        // Usar los totales de Velneo si existen, si no calcular
+        if (p['base_total'] != null &&
+            p['iva_total'] != null &&
+            p['total'] != null) {
+          // ✅ Usar totales de Velneo directamente
+          pMod['base_calculada'] = (p['base_total'] as num).toDouble();
+          pMod['iva_calculado'] = (p['iva_total'] as num).toDouble();
+          pMod['total_calculado'] = (p['total'] as num).toDouble();
+
+          print(
+            '✅ Pedido ${p['id']}: Usando totales de Velneo - Base=${p['base_total']}, IVA=${p['iva_total']}, Total=${p['total']}',
+          );
+        } else {
+          // ⚠️ Calcular manualmente si no vienen de Velneo (fallback)
+          print(
+            '⚠️ Pedido ${p['id']}: Calculando totales manualmente (no vienen de Velneo)',
+          );
+
+          final lineas = await db.obtenerLineasPedido(p['id']);
+          double baseTotal = 0.0;
+          double ivaTotal = 0.0;
+
+          for (var l in lineas) {
+            final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
+            final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
+            final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
+
+            // Descuentos en cascada
+            double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
+            double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
+            double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
+            double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
+
+            // Aplicar descuentos
+            double precioNeto = prec;
+            if (dto > 0) precioNeto *= (1 - dto / 100);
+            if (d1 > 0) precioNeto *= (1 - d1 / 100);
+            if (d2 > 0) precioNeto *= (1 - d2 / 100);
+            if (d3 > 0) precioNeto *= (1 - d3 / 100);
+
+            double baseLinea = precioNeto * cant;
+            double ivaLinea = baseLinea * (iva / 100);
+
+            baseTotal += baseLinea;
+            ivaTotal += ivaLinea;
+          }
+
+          pMod['base_calculada'] = baseTotal;
+          pMod['iva_calculado'] = ivaTotal;
+          pMod['total_calculado'] = baseTotal + ivaTotal;
+        }
+
         pedidosCalculados.add(pMod);
       }
 
@@ -85,8 +119,10 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
         _pedidosFiltrados = pedidosCalculados;
         _isLoading = false;
       });
+
       if (_searchController.text.isNotEmpty) _filtrarPedidos();
     } catch (e) {
+      print('❌ Error al cargar pedidos: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }

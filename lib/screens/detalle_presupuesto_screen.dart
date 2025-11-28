@@ -98,6 +98,28 @@ class _DetallePresupuestoScreenState extends State<DetallePresupuestoScreen> {
     return cantidad * precio;
   }
 
+  double _calcularBasePresupuesto() {
+    double baseTotal = 0.0;
+
+    for (var linea in _lineas) {
+      final subtotal = _calcularSubtotalLinea(linea);
+      final descuento = (linea['por_descuento'] as num?)?.toDouble() ?? 0.0;
+      final dto1 = (linea['dto1'] as num?)?.toDouble() ?? 0.0;
+      final dto2 = (linea['dto2'] as num?)?.toDouble() ?? 0.0;
+      final dto3 = (linea['dto3'] as num?)?.toDouble() ?? 0.0;
+
+      double precioNeto = subtotal;
+      if (descuento > 0) precioNeto *= (1 - descuento / 100);
+      if (dto1 > 0) precioNeto *= (1 - dto1 / 100);
+      if (dto2 > 0) precioNeto *= (1 - dto2 / 100);
+      if (dto3 > 0) precioNeto *= (1 - dto3 / 100);
+
+      baseTotal += precioNeto;
+    }
+
+    return baseTotal;
+  }
+
   double _calcularTotalLinea(Map<String, dynamic> linea) {
     final subtotal = _calcularSubtotalLinea(linea);
     final descuento = (linea['por_descuento'] as num?)?.toDouble() ?? 0.0;
@@ -109,8 +131,31 @@ class _DetallePresupuestoScreenState extends State<DetallePresupuestoScreen> {
     return baseLinea + ivaLinea;
   }
 
+  double _calcularIvaPresupuesto() {
+    double ivaTotal = 0.0;
+
+    for (var linea in _lineas) {
+      final subtotal = _calcularSubtotalLinea(linea);
+      final descuento = (linea['por_descuento'] as num?)?.toDouble() ?? 0.0;
+      final dto1 = (linea['dto1'] as num?)?.toDouble() ?? 0.0;
+      final dto2 = (linea['dto2'] as num?)?.toDouble() ?? 0.0;
+      final dto3 = (linea['dto3'] as num?)?.toDouble() ?? 0.0;
+      final porIva = (linea['por_iva'] as num?)?.toDouble() ?? 0.0;
+
+      double precioNeto = subtotal;
+      if (descuento > 0) precioNeto *= (1 - descuento / 100);
+      if (dto1 > 0) precioNeto *= (1 - dto1 / 100);
+      if (dto2 > 0) precioNeto *= (1 - dto2 / 100);
+      if (dto3 > 0) precioNeto *= (1 - dto3 / 100);
+
+      ivaTotal += precioNeto * (porIva / 100);
+    }
+
+    return ivaTotal;
+  }
+
   double _calcularTotalPresupuesto() {
-    return _lineas.fold(0.0, (sum, linea) => sum + _calcularTotalLinea(linea));
+    return _calcularBasePresupuesto() + _calcularIvaPresupuesto();
   }
 
   @override
@@ -294,26 +339,63 @@ class _DetallePresupuestoScreenState extends State<DetallePresupuestoScreen> {
 
                 // Card con el total del presupuesto
                 Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8),
                   color: const Color(0xFF032458).withOpacity(0.05),
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    child: Column(
                       children: [
-                        const Text(
-                          'TOTAL PRESUPUESTO:',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Base Imponible:',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              '${_calcularBasePresupuesto().toStringAsFixed(2)}€',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
                         ),
-                        Text(
-                          '${_calcularTotalPresupuesto().toStringAsFixed(2)}€',
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF032458),
-                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('IVA:', style: TextStyle(fontSize: 14)),
+                            Text(
+                              '${_calcularIvaPresupuesto().toStringAsFixed(2)}€',
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'TOTAL PRESUPUESTO:',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF032458),
+                              ),
+                            ),
+                            Text(
+                              '${_calcularTotalPresupuesto().toStringAsFixed(2)}€',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF032458),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

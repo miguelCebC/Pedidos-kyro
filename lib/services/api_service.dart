@@ -1241,13 +1241,11 @@ class VelneoAPIService {
           'page[size]': pageSize.toString(),
         };
 
-        // Agregar filtro de comercial si se proporciona
         if (comercialId != null) {
           params['filter[cmr]'] = comercialId.toString();
         }
 
         final url = _buildUrlWithParams('/VTA_PRE_G', params);
-        _log('  📥 Página $page - URL: $url');
 
         try {
           final response = await _getWithSSL(
@@ -1272,46 +1270,47 @@ class VelneoAPIService {
                 break;
               }
 
-              final presupuestosList = listaPresupuestos.map((presupuesto) {
-                return {
-                  'id': presupuesto['id'],
-                  'cliente_id': presupuesto['clt'] ?? 0,
-                  'comercial_id':
-                      presupuesto['cmr'] ??
-                      0, // 👈 CAMBIAR 'comercial_id' por 'cmr'
-                  'fecha':
-                      presupuesto['fch'] ?? DateTime.now().toIso8601String(),
-                  'numero': presupuesto['num_pre'] ?? '',
-                  'estado': presupuesto['est'] ?? '',
-                  'observaciones': presupuesto['obs'] ?? '',
-                  'total': _convertirADouble(presupuesto['tot']),
-                  'sincronizado': 1,
-                };
-              }).toList();
+              // 🟢 MAPEAR INCLUYENDO LOS TOTALES CALCULADOS POR VELNEO
+              final presupuestosFiltrados = listaPresupuestos
+                  .where((p) => p['id'] != null)
+                  .map((presupuesto) {
+                    return {
+                      'id': presupuesto['id'],
+                      'cliente_id': presupuesto['clt'] ?? 0,
+                      'comercial_id': presupuesto['cmr'] ?? 0,
+                      'usuario_id': presupuesto['alt_usr'] ?? 0,
+                      'serie_id': presupuesto['ser'] ?? 0,
+                      'fecha':
+                          presupuesto['fch'] ??
+                          DateTime.now().toIso8601String(),
+                      'numero': presupuesto['num_pre'] ?? '',
+                      'estado': presupuesto['est'] ?? 'P',
+                      'observaciones': presupuesto['obs'] ?? '',
 
-              allPresupuestos.addAll(presupuestosList);
+                      // 🟢 TOTALES CALCULADOS POR VELNEO
+                      'base_total': _convertirADouble(presupuesto['bas_tot']),
+                      'iva_total': _convertirADouble(presupuesto['iva_tot']),
+                      'total': _convertirADouble(presupuesto['tot_pre']),
+
+                      'fecha_validez': presupuesto['fch_val'],
+                      'fecha_aceptacion': presupuesto['fch_ace'],
+                      'sincronizado': 1,
+                    };
+                  })
+                  .toList();
+
+              allPresupuestos.addAll(presupuestosFiltrados);
               _log(
-                '  ✅ Página $page: ${presupuestosList.length} presupuestos (Acumulado: ${allPresupuestos.length}/$totalCount)',
+                '  ✅ Página $page: ${presupuestosFiltrados.length} presupuestos (${listaPresupuestos.length} totales)',
               );
 
               if (listaPresupuestos.length < pageSize) {
-                _log(
-                  '  🏁 Última página (${listaPresupuestos.length} < $pageSize)',
-                );
-                break;
-              }
-
-              if (totalCount > 0 && allPresupuestos.length >= totalCount) {
-                _log(
-                  '  🏁 Total alcanzado (${allPresupuestos.length} >= $totalCount)',
-                );
                 break;
               }
 
               page++;
               await Future.delayed(const Duration(milliseconds: 200));
             } else {
-              _log('  ⚠️ No se encontró campo vta_pre_g en la respuesta');
               break;
             }
           } else {
@@ -1319,9 +1318,7 @@ class VelneoAPIService {
           }
         } catch (e) {
           _log('  ❌ Error en página $page: $e');
-          if (allPresupuestos.isEmpty) {
-            rethrow;
-          }
+          if (allPresupuestos.isEmpty) rethrow;
           break;
         }
       }
@@ -3485,8 +3482,11 @@ class VelneoAPIService {
         final params = {
           'page[number]': page.toString(),
           'page[size]': pageSize.toString(),
-          'sort': '-mod_tim',
         };
+
+        if (desde != null) {
+          params['filter[mod_tim][gte]'] = desde.toIso8601String();
+        }
 
         final url = _buildUrlWithParams('/VTA_PRE_G', params);
 
@@ -3501,44 +3501,40 @@ class VelneoAPIService {
             if (data['vta_pre_g'] != null && data['vta_pre_g'] is List) {
               final listaPresupuestos = data['vta_pre_g'] as List;
 
-              if (listaPresupuestos.isEmpty) {
-                _log('  🏁 No hay más presupuestos');
-                break;
-              }
+              if (listaPresupuestos.isEmpty) break;
 
-              final presupuestosFiltrados = <Map<String, dynamic>>[];
-              for (var presupuesto in listaPresupuestos) {
-                if (desde != null && presupuesto['mod_tim'] != null) {
-                  try {
-                    final fechaMod = DateTime.parse(
-                      presupuesto['mod_tim'].toString(),
-                    );
-                    if (fechaMod.isBefore(desde)) {
-                      deberiasContinuar = false;
-                      break;
-                    }
-                  } catch (e) {
-                    _log('  ⚠️ Error parseando fecha: $e');
-                  }
-                }
+              // 🟢 MAPEAR INCLUYENDO LOS TOTALES
+              final presupuestosFiltrados = listaPresupuestos
+                  .where((p) => p['id'] != null)
+                  .map((presupuesto) {
+                    return {
+                      'id': presupuesto['id'],
+                      'cliente_id': presupuesto['clt'] ?? 0,
+                      'comercial_id': presupuesto['cmr'] ?? 0,
+                      'usuario_id': presupuesto['alt_usr'] ?? 0,
+                      'serie_id': presupuesto['ser'] ?? 0,
+                      'fecha':
+                          presupuesto['fch'] ??
+                          DateTime.now().toIso8601String(),
+                      'numero': presupuesto['num_pre'] ?? '',
+                      'estado': presupuesto['est'] ?? 'P',
+                      'observaciones': presupuesto['obs'] ?? '',
 
-                presupuestosFiltrados.add({
-                  'id': presupuesto['id'],
-                  'cliente_id': presupuesto['clt'] ?? 0,
-                  'comercial_id': presupuesto['cmr'] ?? 0,
-                  'fecha':
-                      presupuesto['fch'] ?? DateTime.now().toIso8601String(),
-                  'numero': presupuesto['num'] ?? '',
-                  'estado': presupuesto['est'] ?? '',
-                  'observaciones': presupuesto['obs'] ?? '',
-                  'total': _convertirADouble(presupuesto['tot']),
-                  'sincronizado': 1,
-                });
-              }
+                      // 🟢 TOTALES CALCULADOS POR VELNEO
+                      'base_total': _convertirADouble(presupuesto['bas_tot']),
+                      'iva_total': _convertirADouble(presupuesto['iva_tot']),
+                      'total': _convertirADouble(presupuesto['tot_pre']),
+
+                      'fecha_validez': presupuesto['fch_val'],
+                      'fecha_aceptacion': presupuesto['fch_ace'],
+                      'sincronizado': 1,
+                    };
+                  })
+                  .toList();
 
               allPresupuestos.addAll(presupuestosFiltrados);
               _log(
-                '  ✅ Página $page: ${presupuestosFiltrados.length} presupuestos nuevos',
+                '  ✅ Página $page: ${presupuestosFiltrados.length} presupuestos',
               );
 
               if (listaPresupuestos.length < pageSize || !deberiasContinuar) {
