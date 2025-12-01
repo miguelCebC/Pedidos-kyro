@@ -1,7 +1,9 @@
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../screens/debug_logs_screen.dart';
+import '../database_helper.dart';
 
 class VelneoAPIService {
   final String baseUrl;
@@ -395,8 +397,103 @@ class VelneoAPIService {
     }
   }
 
-  // 🟢 OBTENER MOVIMIENTOS (Base de Conocimiento)
-  // No guarda en BD, solo devuelve la lista para mostrar
+  // ===============================================
+  // 🟢 FASE 1: SINCRONIZACIÓN DE MAESTROS (Splash Screen)
+  // ===============================================
+  Future<void> sincronizarMaestros() async {
+    _log('🚀 [SPLASH] Iniciando sincronización de MAESTROS...');
+    final db = DatabaseHelper.instance;
+    final prefs = await SharedPreferences.getInstance();
+
+    try {
+      // 1. SERIES
+      _log('📦 Descargando Series...');
+      final series = await obtenerSeries();
+      await db.limpiarSeries();
+      await db.insertarSeriesLote(series.cast<Map<String, dynamic>>());
+
+      // 2. Formas de Pago
+      _log('📦 Descargando Formas de Pago...');
+      final formasPago = await obtenerFormasPago();
+      await db.insertarFormasPagoLote(formasPago.cast<Map<String, dynamic>>());
+
+      // 3. Familias
+      _log('📦 Descargando Familias...');
+      final familias = await obtenerFamilias();
+      await db.limpiarFamilias();
+      await db.insertarFamiliasLote(familias.cast<Map<String, dynamic>>());
+
+      // 4. Configuración de IVA
+      _log('📦 Descargando IVA...');
+      final configIva = await obtenerConfiguracionIVA();
+      if (configIva.isNotEmpty) {
+        await prefs.setDouble('iva_general', configIva['iva_general']!);
+        await prefs.setDouble('iva_reducido', configIva['iva_reducido']!);
+        await prefs.setDouble(
+          'iva_superreducido',
+          configIva['iva_superreducido']!,
+        );
+        await prefs.setDouble('iva_exento', configIva['iva_exento']!);
+      }
+
+      // 5. Maestros CRM
+      _log('📦 Descargando Maestros CRM...');
+
+      final tiposVisita = await obtenerTiposVisita();
+      await db.limpiarTiposVisita();
+      await db.insertarTiposVisitaLote(
+        tiposVisita.cast<Map<String, dynamic>>(),
+      );
+
+      final provincias = await obtenerProvincias();
+      await db.limpiarProvincias();
+      await db.insertarProvinciasLote(provincias.cast<Map<String, dynamic>>());
+
+      final zonas = await obtenerZonasTecnicas();
+      await db.limpiarZonasTecnicas();
+      await db.insertarZonasTecnicasLote(zonas.cast<Map<String, dynamic>>());
+
+      final poblaciones = await obtenerPoblaciones();
+      await db.limpiarPoblaciones();
+      await db.insertarPoblacionesLote(
+        poblaciones.cast<Map<String, dynamic>>(),
+      );
+
+      final campanas = await obtenerCampanas();
+      await db.limpiarCampanas();
+      await db.insertarCampanasLote(campanas.cast<Map<String, dynamic>>());
+
+      _log('✅ [SPLASH] Maestros sincronizados correctamente.');
+    } catch (e) {
+      _log('❌ Error en sincronizarMaestros: $e');
+      rethrow;
+    }
+    _log('📦 Descargando Presupuestos...');
+    final presupuestos = await obtenerPresupuestos();
+    await db.limpiarPresupuestos();
+    await db.insertarPresupuestosLote(
+      presupuestos.cast<Map<String, dynamic>>(),
+    );
+
+    _log('📦 Descargando Líneas de Presupuestos...');
+    final lineasPresupuesto = await obtenerTodasLineasPresupuesto();
+    await db.insertarLineasPresupuestoLote(
+      lineasPresupuesto.cast<Map<String, dynamic>>(),
+    );
+
+    // 7. Pedidos
+    _log('📦 Descargando Pedidos...');
+    final pedidos = await obtenerPedidos();
+    await db.limpiarPedidos();
+    await db.insertarPedidosLote(pedidos.cast<Map<String, dynamic>>());
+
+    _log('📦 Descargando Líneas de Pedidos...');
+    final lineasPedido = await obtenerTodasLineasPedido();
+    await db.insertarLineasPedidoLote(
+      lineasPedido.cast<Map<String, dynamic>>(),
+    );
+  }
+
   Future<List<dynamic>> obtenerMovimientosCliente(int clienteId) async {
     try {
       final allMovs = <dynamic>[];
@@ -934,6 +1031,11 @@ class VelneoAPIService {
       httpClient.close();
     }
   }
+
+  // ===============================================
+  // 🟢 FASE 1: SINCRONIZACIÓN DE MAESTROS (Splash Screen)
+  // ===============================================
+  // Descarga todo lo que NO tiene una pantalla propia y es necesario para funcionar.
 
   // 🟢 1. OBTENER FOTO PEDIDO (Sin guardar en local)
   Future<String?> obtenerFotoPedido(int pedidoId) async {

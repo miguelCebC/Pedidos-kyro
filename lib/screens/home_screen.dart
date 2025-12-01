@@ -73,9 +73,9 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     // Sincronización automática al iniciar
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    /* WidgetsBinding.instance.addPostFrameCallback((_) {
       _sincronizarGlobalEnSegundoPlano();
-    });
+    });*/
   }
 
   void _mostrarDialogoCierre(String mensaje) {

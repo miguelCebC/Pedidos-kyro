@@ -23,7 +23,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
   final _observacionesController = TextEditingController();
   final List<LineaPedidoData> _lineas = [];
 
-  // 🟢 VARIABLES NUEVAS PARA FECHA Y DIRECCIÓN
+  // Variables para Fecha y Dirección
   DateTime? _fechaPresupuesto;
   int? _direccionEntregaId;
   List<Map<String, dynamic>> _direccionesCliente = [];
@@ -62,8 +62,8 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       'obs': _observacionesController.text,
       'est': widget.presupuesto['estado'] ?? 'P',
       'ser': _serieSeleccionadaId,
-      'fch': _fechaPresupuesto?.toIso8601String(), // 🟢 Añadido
-      'dir_env': _direccionEntregaId, // 🟢 Añadido
+      'fch': _fechaPresupuesto?.toIso8601String(),
+      'dir_env': _direccionEntregaId,
     };
 
     final lineasJson = _lineas.map((l) {
@@ -153,7 +153,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
     try {
       final db = DatabaseHelper.instance;
 
-      // 1. Cargar Series
+      // 1. Cargar Series (Ventas)
       final series = await db.obtenerSeries(tipo: 'V');
 
       // 2. Cargar cliente
@@ -163,10 +163,11 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
         orElse: () => {
           'id': widget.presupuesto['cliente_id'],
           'nombre': 'Cliente no encontrado',
+          'direccion': '',
         },
       );
 
-      // 🟢 3. Cargar Direcciones del Cliente
+      // 3. Cargar Direcciones del Cliente
       final direcciones = await db.obtenerDirecciones(
         ent: widget.presupuesto['cliente_id'],
       );
@@ -202,30 +203,36 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
         );
       }
 
+      // Validar Serie seleccionada
+      int? serieIdValido = widget.presupuesto['serie_id'];
+      if (series.isNotEmpty) {
+        final existeSerie = series.any((s) => s['id'] == serieIdValido);
+        if (!existeSerie) {
+          serieIdValido = series[0]['id'];
+        }
+      } else {
+        serieIdValido = null;
+      }
+
       setState(() {
         _series = series;
-        _serieSeleccionadaId = widget.presupuesto['serie_id'];
-        if (_serieSeleccionadaId == null && _series.isNotEmpty) {
-          _serieSeleccionadaId = _series[0]['id'];
-        }
+        _serieSeleccionadaId = serieIdValido;
 
         _clienteSeleccionado = cliente;
         _observacionesController.text =
             widget.presupuesto['observaciones'] ?? '';
         _lineas.addAll(lineasCargadas);
 
-        // 🟢 Asignar Fecha y Dirección
+        // Asignar Fecha
         if (widget.presupuesto['fecha'] != null) {
           _fechaPresupuesto = DateTime.tryParse(widget.presupuesto['fecha']);
         }
+
+        // Asignar Direcciones y selección
         _direccionesCliente = direcciones;
         _direccionEntregaId = widget.presupuesto['direccion_entrega_id'];
 
-        // Si la dirección guardada no está en la lista (o es 0/null), y hay direcciones, ponemos la primera
-        if ((_direccionEntregaId == null || _direccionEntregaId == 0) &&
-            _direccionesCliente.isNotEmpty) {
-          // Opcional: _direccionEntregaId = _direccionesCliente.first['id'];
-        }
+        if (_direccionEntregaId == 0) _direccionEntregaId = null;
 
         _isLoading = false;
       });
@@ -242,14 +249,13 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
     );
 
     if (cliente != null) {
-      // 🟢 Si cambia el cliente, recargar sus direcciones
       final db = DatabaseHelper.instance;
       final direcciones = await db.obtenerDirecciones(ent: cliente['id']);
 
       setState(() {
         _clienteSeleccionado = cliente;
         _direccionesCliente = direcciones;
-        _direccionEntregaId = null; // Reseteamos la dirección
+        _direccionEntregaId = null;
         if (_direccionesCliente.isNotEmpty) {
           _direccionEntregaId = _direccionesCliente.first['id'];
         }
@@ -257,7 +263,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
     }
   }
 
-  // 🟢 SELECCIONAR FECHA
   Future<void> _seleccionarFecha() async {
     final picked = await showDatePicker(
       context: context,
@@ -373,7 +378,8 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       return;
     }
 
-    if (_serieSeleccionadaId == null) {
+    // Permitir guardar sin serie si la lista está vacía, pero avisar
+    if (_serieSeleccionadaId == null && _series.isNotEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Selecciona una serie')));
@@ -405,15 +411,14 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
 
       final apiService = VelneoAPIService(url, apiKey);
 
-      // Preparar datos para API
       final presupuestoData = {
         'cliente_id': _clienteSeleccionado!['id'],
         'comercial_id': comercialId,
         'observaciones': _observacionesController.text,
         'estado': widget.presupuesto['estado'] ?? 'P',
         'serie_id': _serieSeleccionadaId,
-        'fecha': _fechaPresupuesto?.toIso8601String(), // 🟢
-        'direccion_entrega_id': _direccionEntregaId, // 🟢
+        'fecha': _fechaPresupuesto?.toIso8601String(),
+        'direccion_entrega_id': _direccionEntregaId,
         'lineas': _lineas
             .map(
               (linea) => {
@@ -426,7 +431,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
             .toList(),
       };
 
-      // LLAMADA A LA API
       final resultado = await apiService
           .actualizarPresupuesto(widget.presupuesto['id'], presupuestoData)
           .timeout(
@@ -435,26 +439,23 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                 throw Exception('Timeout: El servidor tardó demasiado'),
           );
 
-      // OBTENER TOTALES OFICIALES DEL SERVIDOR
       final totalFinal = resultado['server_total'] ?? _calcularTotal();
       final baseFinal = resultado['server_base'] ?? _calcularBaseImponible();
       final ivaFinal = resultado['server_iva'] ?? _calcularTotalIva();
 
-      // Actualizar en BD local
       final db = DatabaseHelper.instance;
       await db.actualizarPresupuesto(widget.presupuesto['id'], {
         'cliente_id': _clienteSeleccionado!['id'],
         'observaciones': _observacionesController.text,
         'serie_id': _serieSeleccionadaId,
-        'fecha': _fechaPresupuesto?.toIso8601String(), // 🟢
-        'direccion_entrega_id': _direccionEntregaId, // 🟢
+        'fecha': _fechaPresupuesto?.toIso8601String(),
+        'direccion_entrega_id': _direccionEntregaId,
         'total': totalFinal,
         'base_total': baseFinal,
         'iva_total': ivaFinal,
         'sincronizado': 1,
       });
 
-      // Actualizar líneas en BD local
       await db.eliminarLineasPresupuesto(widget.presupuesto['id']);
 
       for (var linea in _lineas) {
@@ -548,7 +549,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // 🟢 FILA DE FECHA Y SERIE
+                // FILA DE FECHA Y SERIE
                 Row(
                   children: [
                     Expanded(
@@ -571,6 +572,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
+                      // 🟢 MOSTRAR SIEMPRE EL DROPBOX (Aunque esté vacío)
                       child: DropdownButtonFormField<int>(
                         isExpanded: true,
                         decoration: const InputDecoration(
@@ -581,67 +583,87 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                             vertical: 15,
                           ),
                         ),
-                        value: _serieSeleccionadaId,
-                        items: _series.map((serie) {
-                          return DropdownMenuItem<int>(
-                            value: serie['id'],
-                            child: Text(
-                              serie['nombre'],
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13),
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            _serieSeleccionadaId = value;
-                          });
-                        },
+                        // Si está vacío, value debe ser null para no romper
+                        value: _series.isNotEmpty ? _serieSeleccionadaId : null,
+                        // Si está vacío, mostramos mensaje o deshabilitamos
+                        items: _series.isEmpty
+                            ? []
+                            : _series.map((serie) {
+                                return DropdownMenuItem<int>(
+                                  value: serie['id'],
+                                  child: Text(
+                                    serie['nombre'],
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                );
+                              }).toList(),
+                        // Si no hay series, el onChanged null lo deshabilita
+                        onChanged: _series.isEmpty
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _serieSeleccionadaId = value;
+                                });
+                              },
+                        // Texto cuando está deshabilitado
+                        disabledHint: const Text(
+                          "Sin series (Sincronizar)",
+                          style: TextStyle(fontSize: 12),
+                        ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
 
-                // 🟢 DIRECCIÓN DE ENTREGA (SOLO SI TIENE)
-                if (_direccionesCliente.isNotEmpty)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
+                // DIRECCIÓN DE ENTREGA
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 4,
+                    ),
+                    child: DropdownButtonFormField<int?>(
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Dirección de Entrega',
+                        border: InputBorder.none,
+                        icon: Icon(Icons.location_on, color: Colors.grey),
                       ),
-                      child: DropdownButtonFormField<int?>(
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Dirección de Entrega',
-                          border: InputBorder.none,
-                          icon: Icon(Icons.location_on, color: Colors.grey),
-                        ),
-                        value: _direccionEntregaId,
-                        items: [
-                          const DropdownMenuItem<int?>(
-                            value: null,
-                            child: Text('Dirección Principal'),
+                      value: _direccionEntregaId,
+                      items: [
+                        DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text(
+                            _clienteSeleccionado?['direccion'] ??
+                                'Dirección Fiscal (Principal)',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 2,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          ..._direccionesCliente.map((dir) {
-                            return DropdownMenuItem<int?>(
-                              value: dir['id'],
-                              child: Text(
-                                dir['direccion'],
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 2,
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                            );
-                          }),
-                        ],
-                        onChanged: (v) =>
-                            setState(() => _direccionEntregaId = v),
-                      ),
+                        ),
+                        ..._direccionesCliente.map((dir) {
+                          return DropdownMenuItem<int?>(
+                            value: dir['id'],
+                            child: Text(
+                              dir['direccion'],
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 2,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          );
+                        }),
+                      ],
+                      onChanged: (v) => setState(() => _direccionEntregaId = v),
                     ),
                   ),
-                if (_direccionesCliente.isNotEmpty) const SizedBox(height: 16),
+                ),
+
+                const SizedBox(height: 16),
 
                 // Observaciones
                 TextField(
