@@ -26,7 +26,6 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
   bool _sincronizando = false;
   int _visitasPendientes = 0;
 
-  // Mapa para cachear nombres de clientes
   final Map<int, String> _clientesNombres = {};
 
   @override
@@ -37,6 +36,42 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     super.initState();
     _selectedDay = _focusedDay;
     _cargarComercialYEventos();
+    // 🟢 Sincronización automática
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sincronizarFondo());
+  }
+
+  // 🟢 MÉTODO NUEVO: Sincronización silenciosa
+  Future<void> _sincronizarFondo() async {
+    if (_sincronizando || _comercialId == null) return;
+    setState(() => _sincronizando = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final url = prefs.getString('velneo_url');
+      final apiKey = prefs.getString('velneo_api_key');
+      if (url == null || apiKey == null) return;
+
+      final api = VelneoAPIService(
+        url.startsWith('http') ? url : 'https://$url',
+        apiKey,
+      );
+
+      final db = DatabaseHelper.instance;
+      await db.limpiarAgenda();
+      final visitasComercial = await api.obtenerAgenda(_comercialId);
+      await db.insertarAgendasLote(
+        visitasComercial.cast<Map<String, dynamic>>(),
+      );
+
+      if (mounted) {
+        _cargarEventos();
+        print("✅ Agenda sincronizada en segundo plano");
+      }
+    } catch (e) {
+      print("⚠️ Error en sync fondo agenda: $e");
+    } finally {
+      if (mounted) setState(() => _sincronizando = false);
+    }
   }
 
   Future<void> _cargarComercialYEventos() async {
@@ -59,14 +94,12 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
 
   Future<void> _cargarEventos() async {
     if (_comercialId == null) return;
-
-    setState(() => _isLoading = true);
+    if (!_sincronizando) setState(() => _isLoading = true);
 
     final db = DatabaseHelper.instance;
     final agendas = await db.obtenerAgenda(_comercialId);
     final pendientes = await db.contarAgendasPendientes(_comercialId);
 
-    // Cargar todos los clientes para cachear sus nombres
     final clientes = await db.obtenerClientes();
     _clientesNombres.clear();
     for (var cliente in clientes) {
@@ -105,15 +138,11 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     final diaKey = DateTime(dia.year, dia.month, dia.day);
     final eventos = _eventos[diaKey] ?? [];
 
-    // Ordenar eventos por hora_inicio
     eventos.sort((a, b) {
       final horaA = a['hora_inicio']?.toString() ?? '';
       final horaB = b['hora_inicio']?.toString() ?? '';
-
-      // Si alguna hora está vacía, poner al final
       if (horaA.isEmpty) return 1;
       if (horaB.isEmpty) return -1;
-
       return horaA.compareTo(horaB);
     });
 
@@ -130,13 +159,10 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
   String _formatearHora(String? horaStr) {
     if (horaStr == null || horaStr.isEmpty) return '--:--';
     try {
-      // Primero intentar parsear como fecha completa ISO
       if (horaStr.contains('T') || horaStr.contains('-')) {
         final dt = DateTime.parse(horaStr);
         return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
       }
-
-      // Si es formato "HH:MM:SS" o "HH:MM"
       if (horaStr.contains(':')) {
         final parts = horaStr.split(':');
         if (parts.length >= 2) {
@@ -145,10 +171,8 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
           return '$hora:$minuto';
         }
       }
-
       return '--:--';
     } catch (e) {
-      print('⚠️ Error formateando hora: $horaStr - $e');
       return '--:--';
     }
   }
@@ -172,74 +196,6 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     }
   }
 
-  Future<void> _sincronizarVisitas() async {
-    if (_comercialId == null) {
-      setState(() => _isLoading = false);
-      return;
-    }
-
-    if (_sincronizando) return;
-
-    setState(() => _sincronizando = true);
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      String url = prefs.getString('velneo_url') ?? '';
-      final String apiKey = prefs.getString('velneo_api_key') ?? '';
-
-      if (url.isEmpty || apiKey.isEmpty) {
-        throw Exception('Configura la URL y API Key en Configuración');
-      }
-
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://$url';
-      }
-
-      print(
-        '📄 Sincronizando agenda del comercial $_comercialId desde Velneo...',
-      );
-
-      final apiService = VelneoAPIService(url, apiKey);
-      final db = DatabaseHelper.instance;
-
-      await db.limpiarAgenda();
-      final visitasComercial = await apiService.obtenerAgenda(_comercialId);
-      await db.insertarAgendasLote(
-        visitasComercial.cast<Map<String, dynamic>>(),
-      );
-
-      print('✅ Agenda sincronizada: ${visitasComercial.length} visitas');
-
-      setState(() => _sincronizando = false);
-      await _cargarEventos();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ ${visitasComercial.length} visitas sincronizadas'),
-          backgroundColor: const Color(0xFF032458),
-        ),
-      );
-    } catch (e) {
-      setState(() {
-        _sincronizando = false;
-        _isLoading = false;
-      });
-
-      print('❌ Error al sincronizar: $e');
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
-          backgroundColor: const Color(0xFFF44336),
-        ),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -248,27 +204,7 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _comercialId == null
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.person_off, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'No hay comercial asignado',
-                    style: TextStyle(fontSize: 18, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () {
-                      // Navegar a configuración (índice 3)
-                      // Necesitarás ajustar esto según tu implementación
-                    },
-                    child: const Text('Ir a Configuración'),
-                  ),
-                ],
-              ),
-            )
+          ? const Center(child: Text('No hay comercial asignado'))
           : Column(
               children: [
                 TableCalendar(
@@ -301,34 +237,15 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
                     });
                     _cargarEventosDelDia(selectedDay);
                   },
-                  onFormatChanged: (format) {
-                    setState(() {
-                      _calendarFormat = format;
-                    });
-                  },
-                  onPageChanged: (focusedDay) {
-                    _focusedDay = focusedDay;
-                  },
+                  onFormatChanged: (format) =>
+                      setState(() => _calendarFormat = format),
+                  onPageChanged: (focusedDay) => _focusedDay = focusedDay,
                 ),
                 const Divider(height: 1),
                 Expanded(
                   child: _eventosDelDia.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
-                              Icon(
-                                Icons.event_busy,
-                                size: 64,
-                                color: Colors.grey,
-                              ),
-                              SizedBox(height: 16),
-                              Text(
-                                'No hay eventos para este día',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ],
-                          ),
+                      ? const Center(
+                          child: Text('No hay eventos para este día'),
                         )
                       : ListView.builder(
                           padding: const EdgeInsets.all(8),
@@ -336,9 +253,8 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
                           itemBuilder: (context, index) {
                             final evento = _eventosDelDia[index];
                             final hora = _formatearHora(evento['hora_inicio']);
-                            final clienteId = evento['cliente_id'] as int?;
                             final nombreCliente = _obtenerNombreCliente(
-                              clienteId,
+                              evento['cliente_id'],
                             );
 
                             return Card(
@@ -352,32 +268,17 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
                                           DetalleVisitaScreen(visita: evento),
                                     ),
                                   );
-                                  // 🟢 RECARGAR SI SE EDITÓ O ELIMINÓ
-                                  if (resultado == true) {
-                                    await _cargarEventos();
-                                  }
+                                  if (resultado == true) await _cargarEventos();
                                 },
                                 child: ListTile(
-                                  leading: Container(
-                                    width: 56,
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: const Color(0xFF032458),
-                                        width: 2,
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        hora,
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          color: Color(0xFF032458),
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                        textAlign: TextAlign.center,
+                                  leading: CircleAvatar(
+                                    backgroundColor: Colors.white,
+                                    child: Text(
+                                      hora,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: Color(0xFF032458),
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                   ),
@@ -404,47 +305,6 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
               child: const Icon(Icons.add),
             )
           : null,
-    );
-  }
-
-  void _mostrarDebugInfo() {
-    if (_eventosDelDia.isEmpty) return;
-
-    final evento = _eventosDelDia[0];
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('DEBUG - Datos RAW'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('ID: ${evento['id']}'),
-              const Divider(),
-              Text('Asunto: ${evento['asunto']}'),
-              const Divider(),
-              Text('fecha_inicio:\n${evento['fecha_inicio']}'),
-              const Divider(),
-              Text('hora_inicio:\n"${evento['hora_inicio']}"'),
-              Text('Tipo: ${evento['hora_inicio'].runtimeType}'),
-              Text('Length: ${evento['hora_inicio']?.toString().length ?? 0}'),
-              const Divider(),
-              Text('hora_fin:\n"${evento['hora_fin']}"'),
-              const Divider(),
-              Text(
-                '_formatearHora() devuelve:\n${_formatearHora(evento['hora_inicio'])}',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
     );
   }
 }

@@ -26,6 +26,8 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
   void initState() {
     super.initState();
     _cargarPedidos();
+    // 🟢 Sincronización automática al entrar
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sincronizarFondo());
     _searchController.addListener(_filtrarPedidos);
   }
 
@@ -37,8 +39,61 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
 
   Future<void> recargarPedidos() => _cargarPedidos();
 
+  // 🟢 MÉTODO CORREGIDO: Sincronización silenciosa con limpieza de líneas duplicadas
+  Future<void> _sincronizarFondo() async {
+    if (_sincronizando) return;
+    setState(() => _sincronizando = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final url = prefs.getString('velneo_url');
+      final apiKey = prefs.getString('velneo_api_key');
+      if (url == null || apiKey == null) return;
+
+      final api = VelneoAPIService(
+        url.startsWith('http') ? url : 'https://$url',
+        apiKey,
+      );
+
+      // 1. Descargar Pedidos
+      final pedidosServer = await api.obtenerPedidos();
+      if (pedidosServer.isNotEmpty) {
+        await DatabaseHelper.instance.insertarPedidosLote(
+          pedidosServer.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      // 2. Descargar Líneas (Importante para los totales)
+      final lineasServer = await api.obtenerTodasLineasPedido();
+      if (lineasServer.isNotEmpty) {
+        // 🟢 FIX: Limpiar líneas viejas de pedidos sincronizados para evitar duplicados.
+        // Mantenemos las líneas de los borradores locales (sincronizado = 0).
+        final db = await DatabaseHelper.instance.database;
+        await db.rawDelete(
+          'DELETE FROM lineas_pedido WHERE pedido_id IN (SELECT id FROM pedidos WHERE sincronizado = 1)',
+        );
+
+        await DatabaseHelper.instance.insertarLineasPedidoLote(
+          lineasServer.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      if (mounted) {
+        // Recargar la vista con los nuevos datos
+        _cargarPedidos();
+        print("✅ Pedidos sincronizados y líneas limpiadas correctamente");
+      }
+    } catch (e) {
+      print("⚠️ Error en sync fondo pedidos: $e");
+    } finally {
+      if (mounted) setState(() => _sincronizando = false);
+    }
+  }
+
   Future<void> _cargarPedidos() async {
-    setState(() => _isLoading = true);
+    // Si ya estamos sincronizando, no mostramos loading full screen para no molestar
+    if (!_sincronizando) setState(() => _isLoading = true);
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final comercialId = prefs.getInt('comercial_id');
@@ -55,30 +110,21 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
         _clientesNombres[c['id']] = c['nombre'];
       }
 
-      // 🟢 USAR TOTALES DE VELNEO (ya vienen calculados correctamente)
+      // PROCESAR TOTALES
       final List<Map<String, dynamic>> pedidosCalculados = [];
 
       for (var p in pedidosRaw) {
         final pMod = Map<String, dynamic>.from(p);
 
-        // Usar los totales de Velneo si existen, si no calcular
-        if (p['base_total'] != null &&
-            p['iva_total'] != null &&
-            p['total'] != null) {
-          // ✅ Usar totales de Velneo directamente
-          pMod['base_calculada'] = (p['base_total'] as num).toDouble();
-          pMod['iva_calculado'] = (p['iva_total'] as num).toDouble();
-          pMod['total_calculado'] = (p['total'] as num).toDouble();
+        double totalServer = (p['total'] as num?)?.toDouble() ?? 0.0;
+        double baseServer = (p['base_total'] as num?)?.toDouble() ?? 0.0;
+        int sincronizado = (p['sincronizado'] as int?) ?? 0;
 
-          print(
-            '✅ Pedido ${p['id']}: Usando totales de Velneo - Base=${p['base_total']}, IVA=${p['iva_total']}, Total=${p['total']}',
-          );
+        if (sincronizado == 1 || (totalServer != 0 || baseServer != 0)) {
+          pMod['base_calculada'] = baseServer;
+          pMod['iva_calculado'] = (p['iva_total'] as num?)?.toDouble() ?? 0.0;
+          pMod['total_calculado'] = totalServer;
         } else {
-          // ⚠️ Calcular manualmente si no vienen de Velneo (fallback)
-          print(
-            '⚠️ Pedido ${p['id']}: Calculando totales manualmente (no vienen de Velneo)',
-          );
-
           final lineas = await db.obtenerLineasPedido(p['id']);
           double baseTotal = 0.0;
           double ivaTotal = 0.0;
@@ -88,13 +134,11 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
             final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
             final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
 
-            // Descuentos en cascada
             double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
             double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
             double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
             double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
 
-            // Aplicar descuentos
             double precioNeto = prec;
             if (dto > 0) precioNeto *= (1 - dto / 100);
             if (d1 > 0) precioNeto *= (1 - d1 / 100);
@@ -171,24 +215,24 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
     setState(() => _sincronizando = true);
     try {
       final prefs = await SharedPreferences.getInstance();
-      final url = prefs.getString('velneo_url');
-      final key = prefs.getString('velneo_api_key');
-      if (url == null) return;
+      String url = prefs.getString('velneo_url') ?? '';
+      final String apiKey = prefs.getString('velneo_api_key') ?? '';
 
-      final api = VelneoAPIService(
-        url.startsWith('http') ? url : 'https://$url',
-        key!,
-      );
+      if (url.isEmpty || apiKey.isEmpty) return;
+      if (!url.startsWith('http')) url = 'https://$url';
+
+      final api = VelneoAPIService(url, apiKey);
       final db = DatabaseHelper.instance;
 
       for (var p in pendientes) {
         final lineas = await db.obtenerLineasPedido(p['id']);
+        final double totalEnvio = p['total_calculado'] ?? 0.0;
 
         final pedidoMap = {
           'cliente_id': p['cliente_id'],
           'fecha': p['fecha'],
           'observaciones': p['observaciones'],
-          'total': p['total_calculado'],
+          'total': totalEnvio,
           'cmr': p['cmr'],
           'serie_id': p['serie_id'],
           'direccion_entrega_id': p['direccion_entrega_id'],
@@ -233,7 +277,6 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
 
     return Column(
       children: [
-        // Barra Superior
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -290,8 +333,6 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
             ],
           ),
         ),
-
-        // Lista Limpia
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
@@ -302,7 +343,7 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                   itemCount: _pedidosFiltrados.length,
                   itemBuilder: (context, index) {
                     final p = _pedidosFiltrados[index];
-
+                    final esSincronizado = p['sincronizado'] == 1;
                     return Card(
                       margin: const EdgeInsets.only(bottom: 12),
                       elevation: 2,
@@ -320,7 +361,6 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                           );
                           _cargarPedidos();
                         },
-                        // 🟢 DISEÑO LIMPIO
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: ListTile(
@@ -353,13 +393,25 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                                 ),
                               ],
                             ),
-                            trailing: Text(
-                              '${(p['total_calculado'] ?? 0.0).toStringAsFixed(2)}€',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                                color: Color(0xFF032458),
-                              ),
+                            trailing: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  '${(p['total_calculado'] ?? 0.0).toStringAsFixed(2)}€',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: Color(0xFF032458),
+                                  ),
+                                ),
+                                if (!esSincronizado)
+                                  const Icon(
+                                    Icons.cloud_upload,
+                                    size: 14,
+                                    color: Colors.orange,
+                                  ),
+                              ],
                             ),
                           ),
                         ),

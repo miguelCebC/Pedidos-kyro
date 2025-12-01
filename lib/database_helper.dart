@@ -282,19 +282,6 @@ class DatabaseHelper {
     await batch.commit(noResult: true);
   }
 
-  // 🟢 NUEVO: Obtener datos básicos de un artículo por su ID
-  Future<Map<String, dynamic>?> obtenerDatosArticulo(int id) async {
-    final db = await database;
-    final result = await db.query(
-      'articulos',
-      columns: ['codigo', 'nombre'], // Solo recuperamos lo necesario
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    return result.isNotEmpty ? result.first : null;
-  }
-
   // 2. Obtener todos los contactos de un cliente (Teléfonos y Emails)
   Future<List<Map<String, dynamic>>> obtenerContactosPorCliente(
     int clienteId,
@@ -456,21 +443,6 @@ class DatabaseHelper {
     await db.delete('series');
   }
 
-  // ... (RESTO DE MÉTODOS EXISTENTES SIN CAMBIOS) ...
-  // Por brevedad, asume que el resto de métodos (insertarCliente, obtenerClientes, etc.) siguen aquí igual.
-
-  // Asegúrate de mantener todos los métodos existentes (obtenerPedidos, guardarContrasenaLocal, etc.)
-  // Aquí solo he añadido lo nuevo y la configuración de la DB.
-
-  Future<int> obtenerUltimoIdAgenda() async {
-    final db = await database;
-    final result = await db.rawQuery('SELECT MAX(id) as max_id FROM agenda');
-    if (result.isNotEmpty && result.first['max_id'] != null) {
-      return result.first['max_id'] as int;
-    }
-    return 0;
-  }
-
   Future<void> guardarContrasenaLocal(String contrasena) async {
     final db = await database;
     await db.insert('config_local', {
@@ -492,39 +464,6 @@ class DatabaseHelper {
   Future<bool> existeContrasenaLocal() async {
     final contrasena = await obtenerContrasenaLocal();
     return contrasena != null && contrasena.isNotEmpty;
-  }
-
-  Future<List<Map<String, dynamic>>> obtenerAgendasNoSincronizadas([
-    int? comercialId,
-  ]) async {
-    final db = await database;
-    if (comercialId != null) {
-      return await db.query(
-        'agenda',
-        where: 'sincronizado = 0 AND comercial_id = ?',
-        whereArgs: [comercialId],
-        orderBy: 'fecha_inicio DESC',
-      );
-    }
-    return await db.query(
-      'agenda',
-      where: 'sincronizado = 0',
-      orderBy: 'fecha_inicio DESC',
-    );
-  }
-
-  Future<int> actualizarAgendaSincronizada(
-    int agendaId,
-    int idVelneo,
-    int sincronizado,
-  ) async {
-    final db = await database;
-    return await db.update(
-      'agenda',
-      {'id': idVelneo, 'sincronizado': sincronizado},
-      where: 'id = ?',
-      whereArgs: [agendaId],
-    );
   }
 
   Future<int> contarAgendasPendientes([int? comercialId]) async {
@@ -591,16 +530,6 @@ class DatabaseHelper {
     final db = await database;
     await db.delete('lineas_presupuesto');
     await db.delete('presupuestos');
-  }
-
-  Future<void> limpiarLineasPedido() async {
-    final db = await database;
-    await db.delete('lineas_pedido');
-  }
-
-  Future<void> limpiarLineasPresupuesto() async {
-    final db = await database;
-    await db.delete('lineas_presupuesto');
   }
 
   Future<int> actualizarPresupuestoSincronizado(
@@ -763,11 +692,6 @@ class DatabaseHelper {
       direccion,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-  }
-
-  Future<List<Map<String, dynamic>>> obtenerProvincias() async {
-    final db = await database;
-    return await db.query('provincias', orderBy: 'nombre');
   }
 
   Future<void> limpiarProvincias() async {
@@ -952,39 +876,6 @@ class DatabaseHelper {
       );
     }
     return await db.query('agenda', orderBy: 'fecha_inicio DESC');
-  }
-
-  Future<List<Map<String, dynamic>>> obtenerAgendaPorFecha(
-    int comercialId,
-    DateTime fecha,
-  ) async {
-    final db = await database;
-    final fechaStr = fecha.toIso8601String().split('T')[0];
-    return await db.query(
-      'agenda',
-      where: 'comercial_id = ? AND date(fecha_inicio) = ?',
-      whereArgs: [comercialId, fechaStr],
-      orderBy: 'hora_inicio',
-    );
-  }
-
-  Future<List<Map<String, dynamic>>> obtenerAgendaRango(
-    int comercialId,
-    DateTime inicio,
-    DateTime fin,
-  ) async {
-    final db = await database;
-    return await db.query(
-      'agenda',
-      where:
-          'comercial_id = ? AND date(fecha_inicio) >= ? AND date(fecha_inicio) <= ?',
-      whereArgs: [
-        comercialId,
-        inicio.toIso8601String().split('T')[0],
-        fin.toIso8601String().split('T')[0],
-      ],
-      orderBy: 'fecha_inicio, hora_inicio',
-    );
   }
 
   Future<void> limpiarAgenda() async {
@@ -1437,34 +1328,5 @@ class DatabaseHelper {
       where: 'clave = ?',
       whereArgs: ['contrasena_local'],
     );
-  }
-
-  Future<void> cargarDatosPrueba() async {
-    // ... (Datos de prueba existentes) ...
-    final db = await database;
-    final count = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM clientes'),
-    );
-    if (count != null && count > 0) return;
-
-    await db.insert('clientes', {
-      'id': 1,
-      'nombre': 'Juan Pérez',
-      'email': 'juan@email.com',
-      'telefono': '600123456',
-      'direccion': 'Calle Mayor 1, Madrid',
-    });
-    // ... más datos de prueba ...
-
-    await db.insert('series', {
-      'id': 1,
-      'nombre': 'Ventas General',
-      'tipo': 'V',
-    });
-    await db.insert('series', {
-      'id': 2,
-      'nombre': 'Compras General',
-      'tipo': 'C',
-    });
   }
 }

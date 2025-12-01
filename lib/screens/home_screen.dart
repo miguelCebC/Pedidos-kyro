@@ -31,51 +31,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Índice seleccionado del menú (0: Artículos por defecto)
   int _selectedIndex = 0;
   String _nombreComercial = 'Cargando...';
 
-  // Keys globales para recargar listas tras acciones
+  // 🟢 Variable estado CRM
+  bool _crmActivo = false;
+
   final GlobalKey<CatalogoClientesScreenState> _clientesKey = GlobalKey();
   final GlobalKey<ListaPedidosScreenState> _pedidosKey = GlobalKey();
-  // Puedes añadir más keys si necesitas recargar otras pantallas (ej: presupuestos)
 
-  late List<Widget> _screens;
-  late List<String> _titles;
+  // 🟢 Estructura dinámica del menú
+  List<Map<String, dynamic>> _menuOptions = [];
 
   @override
   void initState() {
     super.initState();
-    _cargarDatosUsuario();
+    _cargarConfiguracionUsuario();
 
     // Listener para cierres forzosos por token/conexión
     VelneoAPIService.onCierreForzoso = (mensaje) {
       _mostrarDialogoCierre(mensaje);
     };
-
-    // 🟢 DEFINICIÓN DE PANTALLAS (Orden coincide con Drawer)
-    _screens = [
-      const CatalogoArticulosScreen(), // 0
-      ListaPedidosScreen(key: _pedidosKey), // 1
-      CatalogoClientesScreen(key: _clientesKey), // 2
-      const PresupuestosScreen(), // 3
-      const CRMCalendarioScreen(), // 4
-      const LeadsScreen(), // 5
-    ];
-
-    _titles = [
-      'Catálogo de Artículos',
-      'Lista de Pedidos',
-      'Cartera de Clientes',
-      'Presupuestos',
-      'Agenda CRM',
-      'Gestión de Leads',
-    ];
-
-    // Sincronización automática al iniciar
-    /* WidgetsBinding.instance.addPostFrameCallback((_) {
-      _sincronizarGlobalEnSegundoPlano();
-    });*/
   }
 
   void _mostrarDialogoCierre(String mensaje) {
@@ -113,256 +89,100 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _cargarDatosUsuario() async {
+  Future<void> _cargarConfiguracionUsuario() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _nombreComercial = prefs.getString('comercial_nombre') ?? 'Comercial';
-    });
-  }
-
-  // 🟢 GESTIÓN INTELIGENTE DEL BOTÓN FLOTANTE
-  void _onFabPressed() async {
-    switch (_selectedIndex) {
-      case 1: // Pedidos
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CrearPedidoScreen()),
-        );
-        if (result == true) _pedidosKey.currentState?.recargarPedidos();
-        break;
-
-      case 2: // Clientes
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CrearClienteScreen()),
-        );
-        if (result == true) _clientesKey.currentState?.recargarClientes();
-        break;
-
-      case 3: // Presupuestos
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CrearPresupuestoScreen()),
-        );
-        // Si tuvieras key para presupuestos, aquí recargarías
-        break;
-
-      case 4: // Agenda
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CrearVisitaScreen()),
-        );
-        break;
-
-      case 5: // Leads
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const CrearEditarLeadScreen()),
-        );
-        break;
-
-      default:
-        // Artículos (0) no tiene acción de crear
-        break;
+    if (mounted) {
+      setState(() {
+        _nombreComercial = prefs.getString('comercial_nombre') ?? 'Comercial';
+        _crmActivo = prefs.getBool('crm_activo') ?? false;
+        _construirMenu();
+      });
     }
   }
 
-  // 🟢 MOTOR DE SINCRONIZACIÓN COMPLETO
-  Future<void> _sincronizarGlobalEnSegundoPlano() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final url = prefs.getString('velneo_url');
-      final apiKey = prefs.getString('velneo_api_key');
-      final comercialId = prefs.getInt('comercial_id');
+  // 🟢 Construye el menú dinámicamente según la configuración
+  void _construirMenu() {
+    _menuOptions = [
+      {
+        'title': 'Catálogo de Artículos',
+        'icon': Icons.inventory_2,
+        'screen': const CatalogoArticulosScreen(),
+        'fab_icon': null,
+        'fab_action': null,
+      },
+      {
+        'title': 'Lista de Pedidos',
+        'icon': Icons.shopping_cart,
+        'screen': ListaPedidosScreen(key: _pedidosKey),
+        'fab_icon': Icons.add,
+        'fab_action': (BuildContext ctx) async {
+          final result = await Navigator.push(
+            ctx,
+            MaterialPageRoute(builder: (_) => const CrearPedidoScreen()),
+          );
+          if (result == true) _pedidosKey.currentState?.recargarPedidos();
+        },
+      },
+      {
+        'title': 'Cartera de Clientes',
+        'icon': Icons.people,
+        'screen': CatalogoClientesScreen(key: _clientesKey),
+        'fab_icon': Icons.add,
+        'fab_action': (BuildContext ctx) async {
+          final result = await Navigator.push(
+            ctx,
+            MaterialPageRoute(builder: (_) => const CrearClienteScreen()),
+          );
+          if (result == true) _clientesKey.currentState?.recargarClientes();
+        },
+      },
+    ];
 
-      if (url == null || apiKey == null) return;
+    if (_crmActivo) {
+      _menuOptions.addAll([
+        {
+          'title': 'Presupuestos',
+          'icon': Icons.request_quote,
+          'screen': const PresupuestosScreen(),
+          'fab_icon': Icons.add,
+          'fab_action': (BuildContext ctx) async {
+            await Navigator.push(
+              ctx,
+              MaterialPageRoute(builder: (_) => const CrearPresupuestoScreen()),
+            );
+            // Si necesitas recargar, usa GlobalKey como en pedidos
+          },
+        },
+        {
+          'title': 'Agenda CRM',
+          'icon': Icons.calendar_month,
+          'screen': const CRMCalendarioScreen(),
+          'fab_icon': Icons.add,
+          'fab_action': (BuildContext ctx) async {
+            await Navigator.push(
+              ctx,
+              MaterialPageRoute(builder: (_) => const CrearVisitaScreen()),
+            );
+          },
+        },
+        {
+          'title': 'Gestión de Leads',
+          'icon': Icons.filter_alt,
+          'screen': const LeadsScreen(),
+          'fab_icon': Icons.add,
+          'fab_action': (BuildContext ctx) async {
+            await Navigator.push(
+              ctx,
+              MaterialPageRoute(builder: (_) => const CrearEditarLeadScreen()),
+            );
+          },
+        },
+      ]);
+    }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('⬇️ Sincronizando datos completos...'),
-            duration: Duration(seconds: 2),
-            backgroundColor: Color(0xFF032458),
-          ),
-        );
-      }
-
-      final api = VelneoAPIService(
-        url.startsWith('http') ? url : 'https://$url',
-        apiKey,
-      );
-      final db = DatabaseHelper.instance;
-
-      print('🚀 [HOME] Iniciando Sincronización Completa...');
-
-      // 1. Conexión
-      if (!await api.probarConexion()) {
-        print('⚠️ [HOME] No hay conexión con la API.');
-        return;
-      }
-
-      // 2. Artículos
-      final articulosLista = await api.obtenerArticulos();
-      await db.limpiarArticulos();
-      const batchSize = 500;
-      for (var i = 0; i < articulosLista.length; i += batchSize) {
-        final end = (i + batchSize < articulosLista.length)
-            ? i + batchSize
-            : articulosLista.length;
-        await db.insertarArticulosLote(
-          articulosLista.sublist(i, end).cast<Map<String, dynamic>>(),
-        );
-      }
-
-      // 2.1 Familias
-      await db.limpiarFamilias();
-      await db.insertarFamiliasLote(
-        (await api.obtenerFamilias()).cast<Map<String, dynamic>>(),
-      );
-
-      // 3. Clientes y Comerciales
-      final resultadoClientes = await api.obtenerClientes();
-      final clientesList = resultadoClientes['clientes'] as List;
-      final comercialesList = resultadoClientes['comerciales'] as List;
-
-      await db.limpiarClientes();
-      for (var i = 0; i < clientesList.length; i += batchSize) {
-        final end = (i + batchSize < clientesList.length)
-            ? i + batchSize
-            : clientesList.length;
-        await db.insertarClientesLote(
-          clientesList.sublist(i, end).cast<Map<String, dynamic>>(),
-        );
-      }
-
-      await db.limpiarComerciales();
-      await db.insertarComercialesLote(
-        comercialesList.cast<Map<String, dynamic>>(),
-      );
-
-      // 3.1 Contactos
-      final contactos = await api.obtenerContactos();
-      await db.insertarContactosLote(contactos);
-
-      // 4. Series y Formas de Pago
-      await db.limpiarSeries();
-      await db.insertarSeriesLote(
-        (await api.obtenerSeries()).cast<Map<String, dynamic>>(),
-      );
-      await db.insertarFormasPagoLote(
-        (await api.obtenerFormasPago()).cast<Map<String, dynamic>>(),
-      );
-
-      // 5. Direcciones
-      await db.limpiarDirecciones();
-      await db.insertarDireccionesLote(
-        (await api.obtenerDirecciones()).cast<Map<String, dynamic>>(),
-      );
-
-      // 6. CRM Maestros
-      await db.limpiarTiposVisita();
-      await db.insertarTiposVisitaLote(
-        (await api.obtenerTiposVisita()).cast<Map<String, dynamic>>(),
-      );
-      await db.limpiarProvincias();
-      await db.insertarProvinciasLote(
-        (await api.obtenerProvincias()).cast<Map<String, dynamic>>(),
-      );
-      await db.limpiarZonasTecnicas();
-      await db.insertarZonasTecnicasLote(
-        (await api.obtenerZonasTecnicas()).cast<Map<String, dynamic>>(),
-      );
-      await db.limpiarPoblaciones();
-      await db.insertarPoblacionesLote(
-        (await api.obtenerPoblaciones()).cast<Map<String, dynamic>>(),
-      );
-      await db.limpiarCampanas();
-      await db.insertarCampanasLote(
-        (await api.obtenerCampanas()).cast<Map<String, dynamic>>(),
-      );
-
-      // 7. Transaccional (Leads, Agenda, Pedidos, Presupuestos)
-      await db.limpiarLeads();
-      await db.insertarLeadsLote(
-        (await api.obtenerLeads()).cast<Map<String, dynamic>>(),
-      );
-
-      await db.limpiarAgenda();
-      await db.insertarAgendasLote(
-        (await api.obtenerAgenda(comercialId)).cast<Map<String, dynamic>>(),
-      );
-
-      await db.limpiarPedidos();
-      await db.insertarPedidosLote(
-        (await api.obtenerPedidos()).cast<Map<String, dynamic>>(),
-      );
-      await db.insertarLineasPedidoLote(
-        (await api.obtenerTodasLineasPedido()).cast<Map<String, dynamic>>(),
-      );
-
-      await db.limpiarPresupuestos();
-      await db.insertarPresupuestosLote(
-        (await api.obtenerPresupuestos()).cast<Map<String, dynamic>>(),
-      );
-      await db.insertarLineasPresupuestoLote(
-        (await api.obtenerTodasLineasPresupuesto())
-            .cast<Map<String, dynamic>>(),
-      );
-
-      // 8. Tarifas
-      await db.limpiarTarifasCliente();
-      await db.insertarTarifasClienteLote(
-        (await api.obtenerTarifasCliente()).cast<Map<String, dynamic>>(),
-      );
-      await db.limpiarTarifasArticulo();
-      await db.insertarTarifasArticuloLote(
-        (await api.obtenerTarifasArticulo()).cast<Map<String, dynamic>>(),
-      );
-
-      // 9. Movimientos
-      await db.limpiarMovimientos();
-      final movimientos = await api.obtenerMovimientos();
-      for (var i = 0; i < movimientos.length; i += batchSize) {
-        final end = (i + batchSize < movimientos.length)
-            ? i + batchSize
-            : movimientos.length;
-        await db.insertarMovimientosLote(
-          movimientos.sublist(i, end).cast<Map<String, dynamic>>(),
-        );
-      }
-
-      // 10. IVA
-      final configIva = await api.obtenerConfiguracionIVA();
-      if (configIva.isNotEmpty) {
-        await prefs.setDouble('iva_general', configIva['iva_general']!);
-        await prefs.setDouble('iva_reducido', configIva['iva_reducido']!);
-        await prefs.setDouble(
-          'iva_superreducido',
-          configIva['iva_superreducido']!,
-        );
-        await prefs.setDouble('iva_exento', configIva['iva_exento']!);
-      }
-
-      await prefs.setInt(
-        'ultima_sincronizacion',
-        DateTime.now().millisecondsSinceEpoch,
-      );
-
-      print('✅ [HOME] Sincronización completa finalizada.');
-
-      if (mounted) {
-        _pedidosKey.currentState?.recargarPedidos();
-        _clientesKey.currentState?.recargarClientes();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Datos actualizados'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      print("⚠️ Error en sync fondo: $e");
+    // Corregir índice si quedó fuera de rango tras desactivar CRM
+    if (_selectedIndex >= _menuOptions.length) {
+      _selectedIndex = 0;
     }
   }
 
@@ -382,40 +202,61 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // 🟢 FAB dinámico
+  void _onFabPressed() {
+    final action =
+        _menuOptions[_selectedIndex]['fab_action'] as Function(BuildContext)?;
+    if (action != null) {
+      action(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Mostrar botón flotante excepto en Artículos (0)
-    final bool showFab = _selectedIndex != 0;
+    // Si la lista no está inicializada, mostrar carga
+    if (_menuOptions.isEmpty) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final currentOption = _menuOptions[_selectedIndex];
+    final bool showFab = currentOption['fab_action'] != null;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_titles[_selectedIndex]),
+        title: Text(currentOption['title']),
         backgroundColor: const Color(0xFF032458),
         foregroundColor: Colors.white,
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ConfiguracionScreen()),
-            ),
+            onPressed: () async {
+              // 🟢 Esperar retorno para recargar configuración (si cambió CRM activo)
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ConfiguracionScreen()),
+              );
+              _cargarConfiguracionUsuario();
+            },
           ),
         ],
       ),
 
-      // Cuerpo
-      body: IndexedStack(index: _selectedIndex, children: _screens),
+      // Cuerpo dinámico
+      body: currentOption['screen'] as Widget,
 
-      // Botón Flotante
+      // Botón Flotante dinámico
       floatingActionButton: showFab
           ? FloatingActionButton(
               onPressed: _onFabPressed,
               backgroundColor: const Color(0xFF032458),
-              child: const Icon(Icons.add, color: Colors.white),
+              child: Icon(
+                currentOption['fab_icon'] as IconData? ?? Icons.add,
+                color: Colors.white,
+              ),
             )
           : null,
 
-      // Menú Lateral (Drawer)
+      // Menú Lateral (Drawer) dinámico
       drawer: Drawer(
         child: Column(
           children: [
@@ -436,17 +277,23 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
 
             Expanded(
-              child: ListView(
+              child: ListView.builder(
                 padding: EdgeInsets.zero,
-                children: [
-                  _buildDrawerItem(0, Icons.inventory_2, 'Artículos'),
-                  _buildDrawerItem(1, Icons.shopping_cart, 'Pedidos'),
-                  _buildDrawerItem(2, Icons.people, 'Clientes'),
-                  const Divider(),
-                  _buildDrawerItem(3, Icons.request_quote, 'Presupuestos'),
-                  _buildDrawerItem(4, Icons.calendar_month, 'Agenda'),
-                  _buildDrawerItem(5, Icons.filter_alt, 'Leads'),
-                ],
+                itemCount: _menuOptions.length,
+                itemBuilder: (context, index) {
+                  final opt = _menuOptions[index];
+                  // 🟢 DIVISOR ANTES DE LA SECCIÓN CRM (Si existe)
+                  // Detectamos cambio de "bloque" asumiendo que los primeros 3 son fijos
+                  if (index == 3 && _crmActivo) {
+                    return Column(
+                      children: [
+                        const Divider(),
+                        _buildDrawerItem(index, opt['icon'], opt['title']),
+                      ],
+                    );
+                  }
+                  return _buildDrawerItem(index, opt['icon'], opt['title']);
+                },
               ),
             ),
 
@@ -455,14 +302,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: const Icon(Icons.settings, color: Colors.grey),
               title: const Text('Configuración'),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(context);
-                Navigator.push(
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => const ConfiguracionScreen(),
                   ),
                 );
+                _cargarConfiguracionUsuario();
               },
             ),
             ListTile(

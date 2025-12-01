@@ -17,15 +17,16 @@ class _LeadsScreenState extends State<LeadsScreen> {
   final Map<int, String> _clientesNombres = {};
   final Map<int, String> _campanasNombres = {};
   bool _isLoading = true;
-  int? _comercialId;
-  String _comercialNombre = 'Sin comercial';
-  final TextEditingController _searchController = TextEditingController();
   bool _sincronizando = false;
+
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _cargarDatos();
+    // 🟢 Sincronización automática
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sincronizarFondo());
     _searchController.addListener(_filtrarLeads);
   }
 
@@ -35,28 +36,56 @@ class _LeadsScreenState extends State<LeadsScreen> {
     super.dispose();
   }
 
+  // 🟢 MÉTODO NUEVO: Sincronización silenciosa
+  Future<void> _sincronizarFondo() async {
+    if (_sincronizando) return;
+    setState(() => _sincronizando = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final url = prefs.getString('velneo_url');
+      final apiKey = prefs.getString('velneo_api_key');
+      if (url == null || apiKey == null) return;
+
+      final api = VelneoAPIService(
+        url.startsWith('http') ? url : 'https://$url',
+        apiKey,
+      );
+
+      final leadsLista = await api.obtenerLeads();
+      if (leadsLista.isNotEmpty) {
+        final db = DatabaseHelper.instance;
+        await db.limpiarLeads(); // Aquí sí limpiamos porque se descargan TODOS
+        await db.insertarLeadsLote(leadsLista.cast<Map<String, dynamic>>());
+      }
+
+      if (mounted) {
+        _cargarDatos();
+        print("✅ Leads sincronizados en segundo plano");
+      }
+    } catch (e) {
+      print("⚠️ Error en sync fondo leads: $e");
+    } finally {
+      if (mounted) setState(() => _sincronizando = false);
+    }
+  }
+
   Future<void> _cargarDatos() async {
-    setState(() => _isLoading = true);
+    if (!_sincronizando) setState(() => _isLoading = true);
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final comercialId = prefs.getInt('comercial_id');
-      final comercialNombre =
-          prefs.getString('comercial_nombre') ?? 'Sin comercial';
-
       final db = DatabaseHelper.instance;
 
-      // Cargar leads del comercial
       final leads = await db.obtenerLeads(comercialId);
 
-      // Cargar clientes para mostrar nombres
       final clientes = await db.obtenerClientes();
       _clientesNombres.clear();
       for (var cliente in clientes) {
         _clientesNombres[cliente['id'] as int] = cliente['nombre'] as String;
       }
 
-      // Cargar campañas para mostrar nombres
       final campanas = await db.obtenerCampanas();
       _campanasNombres.clear();
       for (var campana in campanas) {
@@ -64,12 +93,12 @@ class _LeadsScreenState extends State<LeadsScreen> {
       }
 
       setState(() {
-        _comercialId = comercialId;
-        _comercialNombre = comercialNombre;
         _leads = leads;
         _leadsFiltrados = leads;
         _isLoading = false;
       });
+
+      if (_searchController.text.isNotEmpty) _filtrarLeads();
     } catch (e) {
       print('Error al cargar leads: $e');
       setState(() => _isLoading = false);
@@ -78,7 +107,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
 
   void _filtrarLeads() {
     final query = _searchController.text.toLowerCase();
-
     setState(() {
       if (query.isEmpty) {
         _leadsFiltrados = _leads;
@@ -89,7 +117,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
           final clienteNombre = _obtenerNombreCliente(
             lead['cliente_id'],
           ).toLowerCase();
-
           return asunto.contains(query) ||
               estado.contains(query) ||
               clienteNombre.contains(query);
@@ -121,11 +148,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
   Color _getColorEstado(String? estado) {
     final estadoInt = int.tryParse(estado?.toString() ?? '1') ?? 1;
     switch (estadoInt) {
-      case 1: // Sin Asignar
+      case 1:
         return Colors.blue;
-      case 2: // Asignado
+      case 2:
         return Colors.orange;
-      case 3: // Finalizado
+      case 3:
         return Colors.green;
       default:
         return Colors.grey;
@@ -135,11 +162,11 @@ class _LeadsScreenState extends State<LeadsScreen> {
   IconData _getIconoEstado(String? estado) {
     final estadoInt = int.tryParse(estado?.toString() ?? '1') ?? 1;
     switch (estadoInt) {
-      case 1: // Sin Asignar
+      case 1:
         return Icons.fiber_new;
-      case 2: // Asignado
+      case 2:
         return Icons.assignment_ind;
-      case 3: // Finalizado
+      case 3:
         return Icons.check_circle;
       default:
         return Icons.help_outline;
@@ -243,18 +270,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
                     'Fecha Alta',
                     _formatearFecha(lead['fecha_alta']),
                   ),
-                  _buildInfoRow(
-                    Icons.event_note,
-                    'Agendado',
-                    lead['agendado'] == 1
-                        ? 'Sí (ID: ${lead['agenda_id']})'
-                        : 'No',
-                  ),
-                  _buildInfoRow(
-                    Icons.send,
-                    'Enviado',
-                    lead['enviado'] == 1 ? 'Sí' : 'No',
-                  ),
                   const SizedBox(height: 16),
                   const Text(
                     'Descripción',
@@ -286,9 +301,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                 CrearEditarLeadScreen(lead: lead),
                           ),
                         );
-                        if (resultado == true) {
-                          _cargarDatos();
-                        }
+                        if (resultado == true) _cargarDatos();
                       },
                       icon: const Icon(Icons.edit),
                       label: const Text('Editar Lead'),
@@ -329,7 +342,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // Barra de búsqueda con botón de sincronización
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -353,9 +365,7 @@ class _LeadsScreenState extends State<LeadsScreen> {
                       suffixIcon: _searchController.text.isNotEmpty
                           ? IconButton(
                               icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                              },
+                              onPressed: () => _searchController.clear(),
                             )
                           : null,
                       border: OutlineInputBorder(
@@ -370,60 +380,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                // Botón de sincronización
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF032458),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: IconButton(
-                    icon: _sincronizando
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : const Icon(Icons.sync, color: Colors.white),
-                    onPressed: _sincronizando ? null : _sincronizarLeads,
-                    tooltip: 'Sincronizar leads',
-                  ),
-                ),
               ],
             ),
           ),
-          // Lista de leads
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _leadsFiltrados.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _searchController.text.isEmpty
-                              ? Icons.people_outline
-                              : Icons.search_off,
-                          size: 64,
-                          color: Colors.grey,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchController.text.isEmpty
-                              ? 'No hay leads'
-                              : 'No se encontraron resultados',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                ? const Center(child: Text('No hay leads'))
                 : ListView.builder(
                     padding: const EdgeInsets.all(8),
                     itemCount: _leadsFiltrados.length,
@@ -485,32 +449,29 @@ class _LeadsScreenState extends State<LeadsScreen> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                       const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: _getColorEstado(
-                                                lead['estado'],
-                                              ).withOpacity(0.15),
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                            ),
-                                            child: Text(
-                                              _getNombreEstado(lead['estado']),
-                                              style: TextStyle(
-                                                color: _getColorEstado(
-                                                  lead['estado'],
-                                                ),
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _getColorEstado(
+                                            lead['estado'],
+                                          ).withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
                                           ),
-                                        ],
+                                        ),
+                                        child: Text(
+                                          _getNombreEstado(lead['estado']),
+                                          style: TextStyle(
+                                            color: _getColorEstado(
+                                              lead['estado'],
+                                            ),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -529,71 +490,6 @@ class _LeadsScreenState extends State<LeadsScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final resultado = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const CrearEditarLeadScreen(),
-            ),
-          );
-          if (resultado == true) {
-            _cargarDatos();
-          }
-        },
-        backgroundColor: const Color(0xFF032458),
-        icon: const Icon(Icons.add),
-        label: const Text('Nuevo Lead'),
-      ),
     );
-  }
-
-  Future<void> _sincronizarLeads() async {
-    setState(() => _sincronizando = true);
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      String url = prefs.getString('velneo_url') ?? '';
-      final String apiKey = prefs.getString('velneo_api_key') ?? '';
-
-      if (url.isEmpty || apiKey.isEmpty) {
-        throw Exception('Configura la URL y API Key en Configuración');
-      }
-
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://$url';
-      }
-
-      final apiService = VelneoAPIService(url, apiKey);
-      final db = DatabaseHelper.instance;
-
-      // Descargar TODOS los leads (sin filtro de comercial)
-      final leadsLista = await apiService.obtenerLeads();
-      await db.limpiarLeads();
-      await db.insertarLeadsLote(leadsLista.cast<Map<String, dynamic>>());
-
-      setState(() => _sincronizando = false);
-      await _cargarDatos();
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('✅ ${leadsLista.length} leads sincronizados'),
-          backgroundColor: const Color(0xFF032458),
-        ),
-      );
-    } catch (e) {
-      setState(() => _sincronizando = false);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
-          backgroundColor: const Color(0xFFF44336),
-        ),
-      );
-    }
   }
 }

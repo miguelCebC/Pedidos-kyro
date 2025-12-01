@@ -20,6 +20,9 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
+  // 🟢 Copia local para refrescar
+  late Map<String, dynamic> _pedido;
+
   List<LineaDetalle> _lineas = [];
   Map<String, dynamic>? _cliente;
 
@@ -39,9 +42,10 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
   @override
   void initState() {
     super.initState();
+    _pedido = widget.pedido; // Inicializamos copia local
     _tabController = TabController(length: 4, vsync: this);
 
-    final conKyrVal = widget.pedido['con_kyr'];
+    final conKyrVal = _pedido['con_kyr'];
     if (conKyrVal == 1 || conKyrVal == true || conKyrVal.toString() == 'true') {
       _isConfirmedKyro = true;
     } else {
@@ -58,8 +62,22 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
     super.dispose();
   }
 
-  // 🟢 CÁLCULO LOCAL DE TOTALES
+  // 🟢 CÁLCULO DE TOTALES (PRIORIDAD SERVIDOR)
   Map<String, double> _calcularResumen() {
+    // 1. Intentar leer los totales que vienen de la API (guardados en BD)
+    int sincronizado = (_pedido['sincronizado'] as int?) ?? 0;
+
+    // Mapeo desde la BD local (que se llenó con tot_ped, bas_tot, iva_tot)
+    double totalDb = (_pedido['total'] as num?)?.toDouble() ?? 0.0;
+    double baseDb = (_pedido['base_total'] as num?)?.toDouble() ?? 0.0;
+    double ivaDb = (_pedido['iva_total'] as num?)?.toDouble() ?? 0.0;
+
+    // Si está sincronizado o tiene datos válidos del servidor
+    if (sincronizado == 1 || (totalDb != 0 || baseDb != 0)) {
+      return {'base': baseDb, 'iva': ivaDb, 'total': totalDb};
+    }
+
+    // 2. Cálculo local fallback (solo para pedidos locales no sincronizados)
     double baseImponible = 0.0;
     double totalIva = 0.0;
 
@@ -87,7 +105,22 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
 
   Future<void> _cargarDetalle() async {
     final db = DatabaseHelper.instance;
-    final lineasRaw = await db.obtenerLineasPedido(widget.pedido['id']);
+
+    // 🟢 1. Refrescar Cabecera desde BD (para tener totales actualizados tras editar)
+    try {
+      final pedidos = await db.obtenerPedidos();
+      final fresco = pedidos.firstWhere(
+        (p) => p['id'] == widget.pedido['id'],
+        orElse: () => widget.pedido,
+      );
+      if (mounted) {
+        setState(() => _pedido = fresco);
+      }
+    } catch (e) {
+      print('Error refrescando pedido: $e');
+    }
+
+    final lineasRaw = await db.obtenerLineasPedido(_pedido['id']);
     final articulos = await db.obtenerArticulos();
 
     final lineasConArticulo = <LineaDetalle>[];
@@ -115,38 +148,34 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
 
     final clientes = await db.obtenerClientes();
     final cliente = clientes.firstWhere(
-      (c) => c['id'] == widget.pedido['cliente_id'],
-      orElse: () => {
-        'id': widget.pedido['cliente_id'],
-        'nombre': 'Desconocido',
-      },
+      (c) => c['id'] == _pedido['cliente_id'],
+      orElse: () => {'id': _pedido['cliente_id'], 'nombre': 'Desconocido'},
     );
 
     String dirNombre = 'Principal del cliente';
-    if (widget.pedido['direccion_entrega_id'] != null &&
-        widget.pedido['direccion_entrega_id'] != 0) {
+    if (_pedido['direccion_entrega_id'] != null &&
+        _pedido['direccion_entrega_id'] != 0) {
       dirNombre = await db.obtenerDireccionPorId(
-        widget.pedido['direccion_entrega_id'],
+        _pedido['direccion_entrega_id'],
       );
     } else {
       dirNombre = cliente['direccion'] ?? 'Principal';
     }
 
     String nomCmr = 'Sin asignar';
-    if (widget.pedido['cmr'] != null && widget.pedido['cmr'] != 0) {
-      final cmr = await db.obtenerComercialPorId(widget.pedido['cmr']);
+    if (_pedido['cmr'] != null && _pedido['cmr'] != 0) {
+      final cmr = await db.obtenerComercialPorId(_pedido['cmr']);
       if (cmr != null) nomCmr = cmr['nombre'];
     }
 
     String nomSerie = 'General';
-    if (widget.pedido['serie_id'] != null && widget.pedido['serie_id'] != 0) {
-      nomSerie = await db.obtenerNombreSerie(widget.pedido['serie_id']);
+    if (_pedido['serie_id'] != null && _pedido['serie_id'] != 0) {
+      nomSerie = await db.obtenerNombreSerie(_pedido['serie_id']);
     }
 
     String nomFpg = 'No especificada';
-    if (widget.pedido['forma_pago'] != null &&
-        widget.pedido['forma_pago'] != 0) {
-      nomFpg = await db.obtenerNombreFormaPago(widget.pedido['forma_pago']);
+    if (_pedido['forma_pago'] != null && _pedido['forma_pago'] != 0) {
+      nomFpg = await db.obtenerNombreFormaPago(_pedido['forma_pago']);
     }
 
     if (mounted) {
@@ -193,11 +222,6 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
     }
   }
 
-  Future<void> _eliminarFoto() async {
-    setState(() => _subiendoFoto = true);
-    await _subirFotoAPI(null);
-  }
-
   Future<void> _subirFotoAPI(String? base64String) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -207,7 +231,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
 
       final apiService = VelneoAPIService(url, apiKey);
       final success = await apiService.actualizarFotoPedido(
-        widget.pedido['id'],
+        _pedido['id'],
         base64String,
       );
 
@@ -234,7 +258,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
       String apiKey = prefs.getString('velneo_api_key') ?? '';
       if (!url.startsWith('http')) url = 'https://$url';
       final apiService = VelneoAPIService(url, apiKey);
-      final foto = await apiService.obtenerFotoPedido(widget.pedido['id']);
+      final foto = await apiService.obtenerFotoPedido(_pedido['id']);
       if (mounted) {
         setState(() {
           _fotoBase64 = foto;
@@ -273,8 +297,8 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
         String apiKey = prefs.getString('velneo_api_key') ?? '';
         if (!url.startsWith('http')) url = 'https://$url';
         final api = VelneoAPIService(url, apiKey);
-        await api.actualizarPedido(widget.pedido['id'], {'con_kyr': true});
-        await DatabaseHelper.instance.actualizarPedido(widget.pedido['id'], {
+        await api.actualizarPedido(_pedido['id'], {'con_kyr': true});
+        await DatabaseHelper.instance.actualizarPedido(_pedido['id'], {
           'con_kyr': 1,
         });
         setState(() {
@@ -293,7 +317,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Pedido ${widget.pedido['numero'] ?? ''}'),
+        title: Text('Pedido ${_pedido['numero'] ?? ''}'),
         backgroundColor: const Color(0xFF032458),
         foregroundColor: Colors.white,
         bottom: TabBar(
@@ -316,7 +340,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
                 final res = await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => EditarPedidoScreen(pedido: widget.pedido),
+                    builder: (_) => EditarPedidoScreen(pedido: _pedido),
                   ),
                 );
                 if (res == true) {
@@ -376,7 +400,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
             child: Column(
               children: [
                 _buildInfoRow('Cliente', _cliente?['nombre'] ?? ''),
-                _buildInfoRow('Fecha', _formatearFecha(widget.pedido['fecha'])),
+                _buildInfoRow('Fecha', _formatearFecha(_pedido['fecha'])),
                 _buildInfoRow('Serie', _nombreSerie),
                 _buildInfoRow('Forma Pago', _nombreFormaPago),
                 _buildInfoRow('Dirección', _direccionEntrega),

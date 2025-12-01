@@ -24,6 +24,8 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
   void initState() {
     super.initState();
     _cargarDatos();
+    // 🟢 Sincronización automática
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sincronizarFondo());
     _searchController.addListener(_filtrarPresupuestos);
   }
 
@@ -33,92 +35,127 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
     super.dispose();
   }
 
-  // Método público para recargar desde el HomeScreen si es necesario
   Future<void> recargarPresupuestos() => _cargarDatos();
 
+  // 🟢 MÉTODO CORREGIDO: Sincronización silenciosa con limpieza
+  Future<void> _sincronizarFondo() async {
+    if (_sincronizando) return;
+    setState(() => _sincronizando = true);
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final url = prefs.getString('velneo_url');
+      final apiKey = prefs.getString('velneo_api_key');
+      if (url == null || apiKey == null) return;
+
+      final api = VelneoAPIService(
+        url.startsWith('http') ? url : 'https://$url',
+        apiKey,
+      );
+
+      // 1. Descargar Presupuestos
+      final presupuestosServer = await api.obtenerPresupuestos();
+      if (presupuestosServer.isNotEmpty) {
+        await DatabaseHelper.instance.insertarPresupuestosLote(
+          presupuestosServer.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      // 2. Descargar Líneas
+      final lineasServer = await api.obtenerTodasLineasPresupuesto();
+      if (lineasServer.isNotEmpty) {
+        // 🟢 FIX: Limpiar líneas viejas de presupuestos sincronizados
+        final db = await DatabaseHelper.instance.database;
+        await db.rawDelete(
+          'DELETE FROM lineas_presupuesto WHERE presupuesto_id IN (SELECT id FROM presupuestos WHERE sincronizado = 1)',
+        );
+
+        await DatabaseHelper.instance.insertarLineasPresupuestoLote(
+          lineasServer.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      if (mounted) {
+        _cargarDatos();
+        print("✅ Presupuestos sincronizados y líneas limpiadas correctamente");
+      }
+    } catch (e) {
+      print("⚠️ Error en sync fondo presupuestos: $e");
+    } finally {
+      if (mounted) setState(() => _sincronizando = false);
+    }
+  }
+
   Future<void> _cargarDatos() async {
-    setState(() => _isLoading = true);
+    // Si no es sync silenciosa, mostramos carga
+    if (!_sincronizando) setState(() => _isLoading = true);
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final comercialId = prefs.getInt('comercial_id');
       final db = DatabaseHelper.instance;
 
-      // 1. Cargar Presupuestos Raw (Cabeceras)
       var presupuestosRaw = await db.obtenerPresupuestos();
-
-      // Filtrar por comercial si está configurado
       if (comercialId != null) {
         presupuestosRaw = presupuestosRaw
             .where((p) => p['comercial_id'] == comercialId)
             .toList();
       }
 
-      // 2. Cargar Clientes para mapear nombres
       final clientes = await db.obtenerClientes();
       _clientesNombres.clear();
       for (var cliente in clientes) {
         _clientesNombres[cliente['id'] as int] = cliente['nombre'] as String;
       }
 
-      // 🟢 3. RECALCULAR TOTALES CON IVA Y DESCUENTOS - VERSIÓN CORREGIDA
       final List<Map<String, dynamic>> presupuestosCalculados = [];
 
       for (var p in presupuestosRaw) {
-        final lineas = await db.obtenerLineasPresupuesto(p['id']);
-        double baseTotal = 0.0;
-        double ivaTotal = 0.0;
+        final pMod = Map<String, dynamic>.from(p);
 
-        for (var l in lineas) {
-          final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
-          final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
-          final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
+        double totalServer = (p['total'] as num?)?.toDouble() ?? 0.0;
+        double baseServer = (p['base_total'] as num?)?.toDouble() ?? 0.0;
+        int sincronizado = (p['sincronizado'] as int?) ?? 0;
 
-          // Descuentos en cascada
-          double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
-          double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
-          double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
-          double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
+        if (sincronizado == 1 || (totalServer != 0 || baseServer != 0)) {
+          pMod['base_calculada'] = baseServer;
+          pMod['iva_calculado'] = (p['iva_total'] as num?)?.toDouble() ?? 0.0;
+          pMod['total_calculado'] = totalServer;
+        } else {
+          final lineas = await db.obtenerLineasPresupuesto(p['id']);
+          double baseTotal = 0.0;
+          double ivaTotal = 0.0;
 
-          // 🔥 DEBUG: Imprimir valores para verificar
-          print(
-            'Línea: cant=$cant, prec=$prec, iva=$iva%, dto=$dto%, d1=$d1%, d2=$d2%, d3=$d3%',
-          );
+          for (var l in lineas) {
+            final double cant = (l['cantidad'] as num?)?.toDouble() ?? 0.0;
+            final double prec = (l['precio'] as num?)?.toDouble() ?? 0.0;
+            final double iva = (l['por_iva'] as num?)?.toDouble() ?? 0.0;
+            double dto = (l['por_descuento'] as num?)?.toDouble() ?? 0.0;
+            double d1 = (l['dto1'] as num?)?.toDouble() ?? 0.0;
+            double d2 = (l['dto2'] as num?)?.toDouble() ?? 0.0;
+            double d3 = (l['dto3'] as num?)?.toDouble() ?? 0.0;
 
-          // Cálculo Neto con descuentos en cascada
-          double precioNeto = prec;
-          if (dto > 0) precioNeto *= (1 - dto / 100);
-          if (d1 > 0) precioNeto *= (1 - d1 / 100);
-          if (d2 > 0) precioNeto *= (1 - d2 / 100);
-          if (d3 > 0) precioNeto *= (1 - d3 / 100);
+            double precioNeto = prec;
+            if (dto > 0) precioNeto *= (1 - dto / 100);
+            if (d1 > 0) precioNeto *= (1 - d1 / 100);
+            if (d2 > 0) precioNeto *= (1 - d2 / 100);
+            if (d3 > 0) precioNeto *= (1 - d3 / 100);
 
-          print('  → Precio neto después descuentos: $precioNeto');
+            double baseLinea = precioNeto * cant;
+            double ivaLinea = baseLinea * (iva / 100);
 
-          // Base imponible de la línea (sin IVA)
-          double baseLinea = precioNeto * cant;
+            baseTotal += baseLinea;
+            ivaTotal += ivaLinea;
+          }
 
-          // IVA de la línea
-          double ivaLinea = baseLinea * (iva / 100);
-
-          print('  → Base línea: $baseLinea, IVA línea: $ivaLinea');
-
-          baseTotal += baseLinea;
-          ivaTotal += ivaLinea;
+          pMod['base_calculada'] = baseTotal;
+          pMod['iva_calculado'] = ivaTotal;
+          pMod['total_calculado'] = baseTotal + ivaTotal;
         }
 
-        print(
-          '📊 Presupuesto ${p['id']}: Base=$baseTotal, IVA=$ivaTotal, Total=${baseTotal + ivaTotal}',
-        );
-
-        // Crear una copia modificable del presupuesto con los nuevos totales
-        final pMod = Map<String, dynamic>.from(p);
-        pMod['base_calculada'] = baseTotal;
-        pMod['iva_calculado'] = ivaTotal;
-        pMod['total_calculado'] = baseTotal + ivaTotal;
         presupuestosCalculados.add(pMod);
       }
 
-      // Ordenar por fecha descendente
       presupuestosCalculados.sort((a, b) {
         try {
           final fechaA = DateTime.parse(a['fecha'] ?? '');
@@ -129,14 +166,13 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
         }
       });
 
-      setState(() {
-        _presupuestos = presupuestosCalculados;
-        _presupuestosFiltrados = presupuestosCalculados;
-        _isLoading = false;
-      });
-
-      if (_searchController.text.isNotEmpty) {
-        _filtrarPresupuestos();
+      if (mounted) {
+        setState(() {
+          _presupuestos = presupuestosCalculados;
+          _presupuestosFiltrados = presupuestosCalculados;
+          _isLoading = false;
+        });
+        if (_searchController.text.isNotEmpty) _filtrarPresupuestos();
       }
     } catch (e) {
       print('Error al cargar presupuestos: $e');
@@ -146,12 +182,10 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
 
   void _filtrarPresupuestos() {
     final query = _searchController.text.toLowerCase();
-
     if (query.isEmpty) {
       setState(() => _presupuestosFiltrados = _presupuestos);
       return;
     }
-
     setState(() {
       _presupuestosFiltrados = _presupuestos.where((presupuesto) {
         final numero = (presupuesto['numero'] ?? '').toString().toLowerCase();
@@ -161,7 +195,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
         final observaciones = (presupuesto['observaciones'] ?? '')
             .toString()
             .toLowerCase();
-
         return numero.contains(query) ||
             clienteNombre.contains(query) ||
             observaciones.contains(query);
@@ -214,7 +247,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
     final pendientes = _presupuestos
         .where((p) => p['sincronizado'] == 0)
         .toList();
-
     if (pendientes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No hay presupuestos pendientes')),
@@ -223,26 +255,22 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
     }
 
     setState(() => _sincronizando = true);
-
     try {
       final prefs = await SharedPreferences.getInstance();
-      String url = prefs.getString('velneo_url') ?? '';
-      final String apiKey = prefs.getString('velneo_api_key') ?? '';
+      final url = prefs.getString('velneo_url');
+      final apiKey = prefs.getString('velneo_api_key');
+      if (url == null) return;
 
-      if (url.isEmpty || apiKey.isEmpty) return;
-      if (!url.startsWith('http')) url = 'https://$url';
-
-      final apiService = VelneoAPIService(url, apiKey);
+      final apiService = VelneoAPIService(
+        url.startsWith('http') ? url : 'https://$url',
+        apiKey!,
+      );
       final db = DatabaseHelper.instance;
 
       int exitosos = 0;
-
       for (var p in pendientes) {
         try {
           final lineas = await db.obtenerLineasPresupuesto(p['id']);
-
-          // Usamos el total calculado para enviarlo también si la API lo requiere,
-          // aunque idealmente la API debería recalcularlo.
           final double totalEnvio = p['total_calculado'] ?? 0.0;
 
           final presupuestoData = {
@@ -276,9 +304,7 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
           print('Error sincronizando presupuesto ${p['id']}: $e');
         }
       }
-
       await _cargarDatos();
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -306,7 +332,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
 
     return Column(
       children: [
-        // 1. Barra de Búsqueda y Sincronización
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -363,29 +388,11 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
             ],
           ),
         ),
-
-        // 2. Lista de Presupuestos
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
               : _presupuestosFiltrados.isEmpty
-              ? const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.request_quote_outlined,
-                        size: 64,
-                        color: Colors.grey,
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'No hay presupuestos',
-                        style: TextStyle(fontSize: 18, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                )
+              ? const Center(child: Text('No hay presupuestos'))
               : ListView.builder(
                   padding: const EdgeInsets.all(8),
                   itemCount: _presupuestosFiltrados.length,
@@ -396,8 +403,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                         : 'Borrador #${p['id']}';
                     final estado = _getNombreEstado(p['estado']);
                     final colorEstado = _getColorEstado(p['estado']);
-
-                    // Usamos el total calculado
                     final double totalMostrar = p['total_calculado'] ?? 0.0;
 
                     return Card(
@@ -421,7 +426,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: ListTile(
-                            // Título con el número
                             title: Text(
                               numero,
                               style: const TextStyle(
@@ -429,7 +433,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                                 fontSize: 16,
                               ),
                             ),
-                            // Subtítulo con Cliente, Fecha y Estado
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -451,7 +454,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    // Pequeño indicador de estado
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 6,
@@ -474,7 +476,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                                 ),
                               ],
                             ),
-                            // Total Calculado (con IVA) a la derecha
                             trailing: Text(
                               '${totalMostrar.toStringAsFixed(2)}€',
                               style: const TextStyle(

@@ -156,20 +156,6 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
     );
   }
 
-  Future<List<dynamic>> _cargarMovimientosDesdeAPI() async {
-    final prefs = await SharedPreferences.getInstance();
-    String url = prefs.getString('velneo_url') ?? '';
-    final String apiKey = prefs.getString('velneo_api_key') ?? '';
-
-    if (url.isEmpty || apiKey.isEmpty) {
-      throw Exception('Configura la API primero');
-    }
-    if (!url.startsWith('http')) url = 'https://$url';
-
-    final apiService = VelneoAPIService(url, apiKey);
-    return await apiService.obtenerMovimientosCliente(widget.cliente['id']);
-  }
-
   String _formatearFecha(String? fechaStr) {
     if (fechaStr == null || fechaStr.isEmpty) return '';
     try {
