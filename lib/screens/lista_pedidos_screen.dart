@@ -51,7 +51,9 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
 
       final clientes = await db.obtenerClientes();
       _clientesNombres.clear();
-      for (var c in clientes) _clientesNombres[c['id']] = c['nombre'];
+      for (var c in clientes) {
+        _clientesNombres[c['id']] = c['nombre'];
+      }
 
       // 🟢 USAR TOTALES DE VELNEO (ya vienen calculados correctamente)
       final List<Map<String, dynamic>> pedidosCalculados = [];
@@ -209,15 +211,17 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
         await db.actualizarPedidoSincronizado(p['id'], 1);
       }
       await _cargarPedidos();
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Sincronización completada')),
         );
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
     } finally {
       if (mounted) setState(() => _sincronizando = false);
     }

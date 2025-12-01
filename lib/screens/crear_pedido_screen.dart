@@ -1,7 +1,7 @@
 import 'dart:convert'; // Para base64
 import 'dart:io'; // Para File
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart'; // 🟢 IMPORTAR IMAGE PICKER
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database_helper.dart';
 import '../services/api_service.dart';
@@ -26,13 +26,14 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
   List<Map<String, dynamic>> _series = [];
   List<Map<String, dynamic>> _formasPago = [];
   List<Map<String, dynamic>> _direccionesCliente = [];
-  int? _direccionEntregaId;
+
   // Selecciones
+  int? _direccionEntregaId; // 🟢 Esta es la variable correcta
   int? _serieSeleccionadaId;
   int? _formaPagoSeleccionadaId;
   DateTime? _fechaEntrega;
 
-  // 🟢 VARIABLE PARA LA FOTO (Temporal en memoria)
+  // Foto
   String? _fotoBase64;
 
   bool _isLoading = false;
@@ -71,13 +72,12 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     }
   }
 
-  // 🟢 1. MÉTODOS PARA TOMAR FOTO
   Future<void> _tomarFoto(ImageSource source) async {
     try {
       final ImagePicker picker = ImagePicker();
       final XFile? image = await picker.pickImage(
         source: source,
-        maxWidth: 800, // Reducir tamaño para optimizar subida
+        maxWidth: 800,
         maxHeight: 800,
         imageQuality: 70,
       );
@@ -102,6 +102,29 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     setState(() {
       _fotoBase64 = null;
     });
+  }
+
+  // 🟢 MÉTODOS DE CÁLCULO QUE FALTABAN
+  double _calcularBaseImponible() {
+    return _lineas.fold(0, (total, linea) {
+      final subtotal = linea.cantidad * linea.precio;
+      final descuento = subtotal * (linea.descuento / 100);
+      return total + (subtotal - descuento);
+    });
+  }
+
+  double _calcularTotalIva() {
+    return _lineas.fold(0, (totalIva, linea) {
+      final subtotal = linea.cantidad * linea.precio;
+      final descuento = subtotal * (linea.descuento / 100);
+      final baseLinea = subtotal - descuento;
+      final ivaLinea = baseLinea * (linea.porcentajeIva / 100);
+      return totalIva + ivaLinea;
+    });
+  }
+
+  double _calcularTotal() {
+    return _calcularBaseImponible() + _calcularTotalIva();
   }
 
   Future<void> _guardarPedido() async {
@@ -137,7 +160,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
 
       final apiService = VelneoAPIService(url, apiKey);
 
-      // 🟢 1. Estructura del pedido completa
       final pedidoData = {
         'cliente_id': _clienteSeleccionado!['id'],
         'cmr': comercialId,
@@ -148,7 +170,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
         'direccion_entrega_id': _direccionEntregaId,
         'observaciones': _observacionesController.text,
         'total': _calcularTotal(),
-        // Mapeo de líneas con los nuevos campos
         'lineas': _lineas
             .map(
               (linea) => {
@@ -156,40 +177,47 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 'cantidad': linea.cantidad,
                 'precio': linea.precio,
                 'tipo_iva': linea.tipoIva,
-
-                // Campos nuevos que pedías:
                 'dto1': linea.dto1,
                 'dto2': linea.dto2,
                 'dto3': linea.dto3,
-
-                'por_dto': linea.descuento, // Descuento general
+                'por_dto': linea.descuento,
               },
             )
             .toList(),
       };
 
-      // 🟢 2. Llamada a la API (Usará los métodos corregidos arriba)
+      // Llamada a la API (que ahora devuelve los totales del servidor)
       final resultado = await apiService.crearPedido(pedidoData);
       final pedidoId = resultado['id'];
 
-      // 🟢 3. Subir Foto si existe
+      // 🟢 OBTENER TOTALES DEL SERVIDOR (O usar local si es null)
+      final totalFinal = resultado['server_total'] ?? _calcularTotal();
+      final baseFinal = resultado['server_base'] ?? _calcularBaseImponible();
+      final ivaFinal = resultado['server_iva'] ?? _calcularTotalIva();
+
+      // Subir Foto si existe
       if (_fotoBase64 != null) {
         await apiService.actualizarFotoPedido(pedidoId, _fotoBase64);
       }
 
-      // 4. Guardar en BD Local
+      // Guardar en BD Local con totales actualizados
       final db = DatabaseHelper.instance;
       await db.insertarPedido({
         'id': pedidoId,
         'cliente_id': _clienteSeleccionado!['id'],
-        'cmr': comercialId,
+        'comercial_id': comercialId,
         'serie_id': _serieSeleccionadaId,
         'fecha': DateTime.now().toIso8601String(),
         'fecha_entrega': _fechaEntrega?.toIso8601String(),
         'forma_pago': _formaPagoSeleccionadaId,
-        'direccion_entrega_id': _direccionEntregaId,
+        'direccion_entrega_id': _direccionEntregaId, // 🟢 Variable corregida
         'observaciones': _observacionesController.text,
-        'total': _calcularTotal(),
+
+        // Totales calculados por Velneo (o fallback local)
+        'total': totalFinal,
+        'base_total': baseFinal,
+        'iva_total': ivaFinal,
+
         'estado': 'Sincronizado',
         'sincronizado': 1,
       });
@@ -249,17 +277,15 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     if (cliente != null) {
       setState(() {
         _clienteSeleccionado = cliente;
-        _direccionEntregaId = null; // Reseteamos dirección anterior
+        _direccionEntregaId = null;
         _direccionesCliente = [];
       });
 
-      // Cargar direcciones del cliente
       final db = DatabaseHelper.instance;
       final direcciones = await db.obtenerDirecciones(ent: cliente['id']);
 
       setState(() {
         _direccionesCliente = direcciones;
-        // Asignar automáticamente la primera dirección encontrada como default
         if (_direccionesCliente.isNotEmpty) {
           _direccionEntregaId = _direccionesCliente.first['id'];
         }
@@ -294,13 +320,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
     }
   }
 
-  double _calcularTotal() {
-    return _lineas.fold(0, (sum, l) {
-      final base = l.cantidad * l.precio * (1 - (l.descuento / 100));
-      return sum + (base * (1 + (l.porcentajeIva / 100)));
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -313,7 +332,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                // CLIENTE
                 Card(
                   child: ListTile(
                     title: Text(
@@ -333,6 +351,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+
                 if (_clienteSeleccionado != null &&
                     _direccionesCliente.isNotEmpty)
                   Card(
@@ -374,7 +393,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                     ),
                   ),
-                // FECHA Y SERIE
+
                 const SizedBox(height: 16),
 
                 Row(
@@ -425,7 +444,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // FORMA DE PAGO
                 DropdownButtonFormField<int>(
                   isExpanded: true,
                   decoration: const InputDecoration(
@@ -454,7 +472,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // OBSERVACIONES
                 TextField(
                   controller: _observacionesController,
                   decoration: const InputDecoration(
@@ -466,7 +483,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // 🟢 SECCIÓN FOTOGRAFÍA
+                // FOTOGRAFÍA
                 Card(
                   elevation: 2,
                   shape: RoundedRectangleBorder(
@@ -545,7 +562,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // BOTÓN AGREGAR ARTÍCULO
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -569,7 +585,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // LISTA ARTÍCULOS
                 if (_lineas.isEmpty)
                   const Padding(
                     padding: EdgeInsets.all(16.0),
@@ -601,7 +616,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
 
                 const SizedBox(height: 24),
 
-                // BOTÓN GUARDAR
                 SizedBox(
                   width: double.infinity,
                   height: 50,

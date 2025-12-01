@@ -198,7 +198,7 @@ class _EditarLineaDialogState extends State<EditarLineaDialog> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
-              value: _tipoIvaSeleccionado,
+              initialValue: _tipoIvaSeleccionado,
               decoration: const InputDecoration(
                 labelText: 'Tipo de IVA',
                 border: OutlineInputBorder(),

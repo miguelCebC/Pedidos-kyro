@@ -19,17 +19,20 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
   final _observacionesController = TextEditingController();
   final List<LineaPedidoData> _lineas = [];
 
-  // Variables para Series
+  List<Map<String, dynamic>> _direccionesCliente = [];
   List<Map<String, dynamic>> _series = [];
+  List<Map<String, dynamic>> _formasPago = [];
+  int? _direccionEntregaId;
   int? _serieSeleccionadaId;
-
+  int? _formaPagoSeleccionadaId;
+  DateTime? _fechaValidez; // Fecha de validez del presupuesto
   bool _isLoading = false;
   bool _guardando = false;
 
   @override
   void initState() {
     super.initState();
-    _cargarSeries();
+    _cargarMaestros();
   }
 
   @override
@@ -38,20 +41,20 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
     super.dispose();
   }
 
-  Future<void> _cargarSeries() async {
-    try {
-      final series = await DatabaseHelper.instance.obtenerSeries(tipo: 'V');
-      if (mounted) {
-        setState(() {
-          _series = series;
-          if (_series.isNotEmpty) {
-            _serieSeleccionadaId = _series[0]['id'];
-          }
-        });
+  Future<void> _cargarMaestros() async {
+    final db = DatabaseHelper.instance;
+    final series = await db.obtenerSeries(tipo: 'V'); // V = Ventas
+    final formasPago = await db.obtenerFormasPago();
+
+    setState(() {
+      _series = series;
+      _formasPago = formasPago;
+
+      // Asignar primera serie por defecto si existe
+      if (_series.isNotEmpty) {
+        _serieSeleccionadaId = _series.first['id'];
       }
-    } catch (e) {
-      print('Error cargando series: $e');
-    }
+    });
   }
 
   Future<void> _seleccionarCliente() async {
@@ -59,8 +62,25 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
       context: context,
       builder: (dialogContext) => const BuscarClienteDialog(),
     );
+
     if (cliente != null) {
-      setState(() => _clienteSeleccionado = cliente);
+      setState(() {
+        _clienteSeleccionado = cliente;
+        _direccionEntregaId = null;
+        _direccionesCliente = [];
+      });
+
+      // Cargar direcciones del cliente
+      final db = DatabaseHelper.instance;
+      final direcciones = await db.obtenerDirecciones(ent: cliente['id']);
+
+      setState(() {
+        _direccionesCliente = direcciones;
+        // Asignar automáticamente la primera dirección como default
+        if (_direccionesCliente.isNotEmpty) {
+          _direccionEntregaId = _direccionesCliente.first['id'];
+        }
+      });
     }
   }
 
@@ -199,30 +219,43 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
 
       final apiService = VelneoAPIService(url, apiKey);
 
+      // 🟢 ESTRUCTURA COMPLETA DEL PRESUPUESTO
       final presupuestoData = {
         'cliente_id': _clienteSeleccionado!['id'],
         'comercial_id': comercialId,
         'serie_id': _serieSeleccionadaId,
         'fecha': DateTime.now().toIso8601String(),
+        'fecha_validez':
+            _fechaValidez?.toIso8601String() ??
+            DateTime.now()
+                .add(const Duration(days: 30))
+                .toIso8601String(), // 30 días por defecto
         'numero': '',
-        'estado': 'P',
+        'estado': 'P', // P = Pendiente
         'observaciones': _observacionesController.text,
+        'forma_pago': _formaPagoSeleccionadaId,
+        'direccion_entrega_id': _direccionEntregaId,
         'total': _calcularTotal(),
-        'lineas': _lineas
-            .map(
-              (linea) => {
-                'articulo_id': linea.articulo['id'],
-                'cantidad': linea.cantidad,
-                'precio': linea.precio,
-                'por_dto': linea.descuento,
-                'reg_iva_vta': linea.tipoIva,
-              },
-            )
-            .toList(),
+        'lineas': _lineas.map((linea) {
+          return {
+            'articulo_id': linea.articulo['id'],
+            'cantidad': linea.cantidad,
+            'precio': linea.precio,
+            'por_dto': linea.descuento,
+            'dto1': linea.dto1,
+            'dto2': linea.dto2,
+            'dto3': linea.dto3,
+            'reg_iva_vta': linea.tipoIva,
+          };
+        }).toList(),
       };
-
       final resultado = await apiService.crearPresupuesto(presupuestoData);
       final presupuestoId = resultado['id'];
+
+      // 🟢 OBTENER TOTALES DEL SERVIDOR
+      final totalFinal = resultado['server_total'] ?? _calcularTotal();
+      final baseFinal = resultado['server_base'] ?? _calcularBaseImponible();
+      final ivaFinal = resultado['server_iva'] ?? _calcularTotalIva();
 
       final db = DatabaseHelper.instance;
       await db.insertarPresupuesto({
@@ -234,7 +267,12 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
         'numero': '',
         'estado': 'P',
         'observaciones': _observacionesController.text,
-        'total': _calcularTotal(),
+
+        // 🟢 GUARDAR TOTALES CORRECTOS
+        'total': totalFinal,
+        'base_total': baseFinal,
+        'iva_total': ivaFinal,
+
         'sincronizado': 1,
       });
 
@@ -245,39 +283,34 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
           'cantidad': linea.cantidad,
           'precio': linea.precio,
           'por_descuento': linea.descuento,
-          'por_iva': linea.porcentajeIva,
+          'dto1': linea.dto1,
+          'dto2': linea.dto2,
+          'dto3': linea.dto3,
+          'tipo_iva': linea.tipoIva,
         });
       }
 
-      setState(() {
-        _isLoading = false;
-        _guardando = false;
-      });
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✅ Presupuesto #$presupuestoId creado correctamente'),
           backgroundColor: const Color(0xFF032458),
-          duration: const Duration(seconds: 2),
         ),
       );
-
       Navigator.pop(context, true);
     } catch (e) {
       setState(() {
         _isLoading = false;
         _guardando = false;
       });
-
       if (!mounted) return;
-
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Error'),
-          content: Text(e.toString().replaceAll('Exception: ', '')),
+        builder: (_) => AlertDialog(
+          title: const Text('Error al crear'),
+          content: SingleChildScrollView(
+            child: Text(e.toString().replaceAll('Exception: ', '')),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -323,44 +356,133 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // 🟢 DROPDOWN DE SERIES CORREGIDO
-                if (_series.isNotEmpty)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 4,
+                DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Serie de Facturación *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.description),
+                  ),
+                  value: _serieSeleccionadaId,
+                  items: _series.map((s) {
+                    return DropdownMenuItem<int>(
+                      value: s['id'],
+                      child: Text(s['nombre'], overflow: TextOverflow.ellipsis),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => _serieSeleccionadaId = v),
+                ),
+
+                const SizedBox(height: 16),
+
+                // 🟢 DIRECCIÓN DE ENTREGA
+                if (_clienteSeleccionado != null)
+                  DropdownButtonFormField<int>(
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Dirección de Entrega',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.location_on),
+                    ),
+                    value: _direccionEntregaId,
+                    items: [
+                      const DropdownMenuItem<int>(
+                        value: null,
+                        child: Text('Dirección principal'),
                       ),
-                      child: DropdownButtonFormField<int>(
-                        isExpanded: true, // 🟢 EVITAR OVERFLOW
-                        decoration: const InputDecoration(
-                          labelText: 'Serie de Facturación',
-                          border: InputBorder.none,
-                          icon: Icon(Icons.folder_open, color: Colors.grey),
+                      ..._direccionesCliente.map((d) {
+                        return DropdownMenuItem<int>(
+                          value: d['id'],
+                          child: Text(
+                            d['direccion'] ?? 'Sin nombre',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (v) => setState(() => _direccionEntregaId = v),
+                  ),
+
+                const SizedBox(height: 16),
+
+                // 🟢 FORMA DE PAGO
+                DropdownButtonFormField<int>(
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Forma de Pago',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.payment),
+                  ),
+                  value: _formaPagoSeleccionadaId,
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: null,
+                      child: Text('Sin especificar'),
+                    ),
+                    ..._formasPago.map((f) {
+                      return DropdownMenuItem<int>(
+                        value: f['id'],
+                        child: Text(
+                          f['nombre'],
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        initialValue: _serieSeleccionadaId,
-                        items: _series.map((serie) {
-                          return DropdownMenuItem<int>(
-                            value: serie['id'],
-                            child: Text(
-                              serie['nombre'],
-                              overflow:
-                                  TextOverflow.ellipsis, // 🟢 CORTAR TEXTO
-                              maxLines: 1,
+                      );
+                    }),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _formaPagoSeleccionadaId = v),
+                ),
+
+                const SizedBox(height: 16),
+
+                // 🟢 FECHA DE VALIDEZ DEL PRESUPUESTO
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Fecha de Validez'),
+                  subtitle: Text(
+                    _fechaValidez != null
+                        ? '${_fechaValidez!.day}/${_fechaValidez!.month}/${_fechaValidez!.year}'
+                        : '30 días desde hoy (por defecto)',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                  leading: const Icon(
+                    Icons.calendar_today,
+                    color: Color(0xFF032458),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_fechaValidez != null)
+                        IconButton(
+                          icon: const Icon(Icons.clear, size: 20),
+                          onPressed: () => setState(() => _fechaValidez = null),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_calendar),
+                        onPressed: () async {
+                          final fecha = await showDatePicker(
+                            context: context,
+                            initialDate:
+                                _fechaValidez ??
+                                DateTime.now().add(const Duration(days: 30)),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 365),
                             ),
                           );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            _serieSeleccionadaId = value;
-                          });
+                          if (fecha != null) {
+                            setState(() => _fechaValidez = fecha);
+                          }
                         },
                       ),
-                    ),
+                    ],
                   ),
-                if (_series.isNotEmpty) const SizedBox(height: 16),
+                ),
 
-                // Observaciones
+                const SizedBox(height: 16),
+
+                // OBSERVACIONES (ya existente)
                 TextField(
                   controller: _observacionesController,
                   decoration: const InputDecoration(
@@ -368,7 +490,7 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.note),
                   ),
-                  maxLines: 3,
+                  maxLines: 2,
                 ),
                 const SizedBox(height: 24),
 

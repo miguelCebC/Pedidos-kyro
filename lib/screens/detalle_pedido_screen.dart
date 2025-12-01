@@ -129,7 +129,7 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
         widget.pedido['direccion_entrega_id'],
       );
     } else {
-      if (cliente != null) dirNombre = cliente['direccion'] ?? 'Principal';
+      dirNombre = cliente['direccion'] ?? 'Principal';
     }
 
     String nomCmr = 'Sin asignar';
@@ -235,11 +235,12 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
       if (!url.startsWith('http')) url = 'https://$url';
       final apiService = VelneoAPIService(url, apiKey);
       final foto = await apiService.obtenerFotoPedido(widget.pedido['id']);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _fotoBase64 = foto;
           _cargandoFoto = false;
         });
+      }
     } catch (e) {
       if (mounted) setState(() => _cargandoFoto = false);
     }

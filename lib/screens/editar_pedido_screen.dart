@@ -501,7 +501,7 @@ class _EditarPedidoScreenState extends State<EditarPedidoScreen> {
                           border: InputBorder.none,
                           icon: Icon(Icons.location_on, color: Colors.grey),
                         ),
-                        value: _direccionEntregaId,
+                        initialValue: _direccionEntregaId,
                         items: [
                           const DropdownMenuItem<int?>(
                             value: null,
@@ -581,7 +581,7 @@ class _EditarPedidoScreenState extends State<EditarPedidoScreen> {
                       labelText: 'Serie',
                       border: OutlineInputBorder(),
                     ),
-                    value: _serieSeleccionadaId,
+                    initialValue: _serieSeleccionadaId,
                     items: _series.map((s) {
                       return DropdownMenuItem<int>(
                         value: s['id'],
@@ -603,7 +603,7 @@ class _EditarPedidoScreenState extends State<EditarPedidoScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.payment),
                   ),
-                  value: _formaPagoSeleccionadaId,
+                  initialValue: _formaPagoSeleccionadaId,
                   items: [
                     const DropdownMenuItem<int>(
                       value: null,

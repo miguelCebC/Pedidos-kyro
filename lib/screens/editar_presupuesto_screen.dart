@@ -1,4 +1,4 @@
-import 'dart:convert'; // 🟢 IMPORTANTE: Necesario para jsonEncode
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../database_helper.dart';
@@ -22,6 +22,16 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
   Map<String, dynamic>? _clienteSeleccionado;
   final _observacionesController = TextEditingController();
   final List<LineaPedidoData> _lineas = [];
+
+  // 🟢 VARIABLES NUEVAS PARA FECHA Y DIRECCIÓN
+  DateTime? _fechaPresupuesto;
+  int? _direccionEntregaId;
+  List<Map<String, dynamic>> _direccionesCliente = [];
+
+  // Variables para Series
+  List<Map<String, dynamic>> _series = [];
+  int? _serieSeleccionadaId;
+
   bool _isLoading = true;
   bool _guardando = false;
 
@@ -37,53 +47,42 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
     super.dispose();
   }
 
-  // ==============================================================
-  // 🟢 NUEVO MÉTODO: MOSTRAR JSON EN POPUP (DEBUG) - VERSIÓN PRESUPUESTOS
-  // ==============================================================
+  // DEBUG JSON
   Future<void> _mostrarDebugJson() async {
-    if (_clienteSeleccionado == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Faltan datos para generar el JSON')),
-      );
-      return;
-    }
+    if (_clienteSeleccionado == null) return;
 
     final prefs = await SharedPreferences.getInstance();
     final comercialId = prefs.getInt('comercial_id');
 
-    // 1. Simular el JSON de Cabecera
     final cabeceraJson = {
       'emp': '1',
       'emp_div': '1',
       'clt': _clienteSeleccionado!['id'],
-      'cmr': comercialId, // O widget.presupuesto['comercial_id']
+      'cmr': comercialId,
       'obs': _observacionesController.text,
       'est': widget.presupuesto['estado'] ?? 'P',
+      'ser': _serieSeleccionadaId,
+      'fch': _fechaPresupuesto?.toIso8601String(), // 🟢 Añadido
+      'dir_env': _direccionEntregaId, // 🟢 Añadido
     };
 
-    // 2. Simular el JSON de las Líneas
-    // Nota: En presupuestos los campos suelen ser 'vta_pre', 'can', 'pre'
     final lineasJson = _lineas.map((l) {
       return {
         'vta_pre': widget.presupuesto['id'],
         'emp': '1',
         'art': l.articulo['id'],
-        'can': l
-            .cantidad, // En pedidos es 'can_ped', en presupuestos suele ser 'can'
+        'can': l.cantidad,
         'pre': l.precio,
-        // 🔥 CAMPO CLAVE VERIFICADO:
         'reg_iva_vta': l.tipoIva,
       };
     }).toList();
 
-    // Convertir a String bonito
     final encoder = const JsonEncoder.withIndent('  ');
     final headerString = encoder.convert(cabeceraJson);
     final linesString = encoder.convert(lineasJson);
 
     if (!mounted) return;
 
-    // Mostrar Popup
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -96,7 +95,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'CABECERA (PUT/POST):',
+                  'CABECERA:',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Colors.blue,
@@ -115,9 +114,9 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text(
-                  'LÍNEAS (${lineasJson.length}) (POST individuales):',
-                  style: const TextStyle(
+                const Text(
+                  'LÍNEAS:',
+                  style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: Colors.green,
                   ),
@@ -147,7 +146,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       ),
     );
   }
-  // ==============================================================
 
   Future<void> _cargarDatos() async {
     setState(() => _isLoading = true);
@@ -155,7 +153,10 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
     try {
       final db = DatabaseHelper.instance;
 
-      // Cargar cliente
+      // 1. Cargar Series
+      final series = await db.obtenerSeries(tipo: 'V');
+
+      // 2. Cargar cliente
       final clientes = await db.obtenerClientes();
       final cliente = clientes.firstWhere(
         (c) => c['id'] == widget.presupuesto['cliente_id'],
@@ -165,7 +166,12 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
         },
       );
 
-      // Cargar líneas del presupuesto
+      // 🟢 3. Cargar Direcciones del Cliente
+      final direcciones = await db.obtenerDirecciones(
+        ent: widget.presupuesto['cliente_id'],
+      );
+
+      // 4. Cargar líneas
       final lineasRaw = await db.obtenerLineasPresupuesto(
         widget.presupuesto['id'],
       );
@@ -183,7 +189,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
           },
         );
 
-        // 🟢 CORRECCIÓN: Leer IVA de la BD correctamente
         String tipoIvaDb = linea['tipo_iva']?.toString() ?? 'G';
 
         lineasCargadas.add(
@@ -192,16 +197,36 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
             cantidad: (linea['cantidad'] as num).toDouble(),
             precio: (linea['precio'] as num).toDouble(),
             descuento: (linea['por_descuento'] as num?)?.toDouble() ?? 0.0,
-            tipoIva: tipoIvaDb, // Usar el valor real
+            tipoIva: tipoIvaDb,
           ),
         );
       }
 
       setState(() {
+        _series = series;
+        _serieSeleccionadaId = widget.presupuesto['serie_id'];
+        if (_serieSeleccionadaId == null && _series.isNotEmpty) {
+          _serieSeleccionadaId = _series[0]['id'];
+        }
+
         _clienteSeleccionado = cliente;
         _observacionesController.text =
             widget.presupuesto['observaciones'] ?? '';
         _lineas.addAll(lineasCargadas);
+
+        // 🟢 Asignar Fecha y Dirección
+        if (widget.presupuesto['fecha'] != null) {
+          _fechaPresupuesto = DateTime.tryParse(widget.presupuesto['fecha']);
+        }
+        _direccionesCliente = direcciones;
+        _direccionEntregaId = widget.presupuesto['direccion_entrega_id'];
+
+        // Si la dirección guardada no está en la lista (o es 0/null), y hay direcciones, ponemos la primera
+        if ((_direccionEntregaId == null || _direccionEntregaId == 0) &&
+            _direccionesCliente.isNotEmpty) {
+          // Opcional: _direccionEntregaId = _direccionesCliente.first['id'];
+        }
+
         _isLoading = false;
       });
     } catch (e) {
@@ -215,8 +240,36 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       context: context,
       builder: (dialogContext) => const BuscarClienteDialog(),
     );
+
     if (cliente != null) {
-      setState(() => _clienteSeleccionado = cliente);
+      // 🟢 Si cambia el cliente, recargar sus direcciones
+      final db = DatabaseHelper.instance;
+      final direcciones = await db.obtenerDirecciones(ent: cliente['id']);
+
+      setState(() {
+        _clienteSeleccionado = cliente;
+        _direccionesCliente = direcciones;
+        _direccionEntregaId = null; // Reseteamos la dirección
+        if (_direccionesCliente.isNotEmpty) {
+          _direccionEntregaId = _direccionesCliente.first['id'];
+        }
+      });
+    }
+  }
+
+  // 🟢 SELECCIONAR FECHA
+  Future<void> _seleccionarFecha() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _fechaPresupuesto ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+      locale: const Locale('es', 'ES'),
+    );
+    if (picked != null) {
+      setState(() {
+        _fechaPresupuesto = picked;
+      });
     }
   }
 
@@ -250,7 +303,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
           cantidad: 1,
           precio: precioInfo['precio']!,
           descuento: precioInfo['descuento']!,
-          tipoIva: 'G', // Valor por defecto
+          tipoIva: 'G',
         ),
       );
 
@@ -320,6 +373,13 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       return;
     }
 
+    if (_serieSeleccionadaId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Selecciona una serie')));
+      return;
+    }
+
     if (_lineas.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Agrega al menos un artículo')),
@@ -341,35 +401,33 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       if (url.isEmpty || apiKey.isEmpty) {
         throw Exception('Configura la URL y API Key en Configuración');
       }
-
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'https://$url';
-      }
+      if (!url.startsWith('http')) url = 'https://$url';
 
       final apiService = VelneoAPIService(url, apiKey);
 
-      // Preparar datos del presupuesto para actualizar en la API
+      // Preparar datos para API
       final presupuestoData = {
         'cliente_id': _clienteSeleccionado!['id'],
         'comercial_id': comercialId,
         'observaciones': _observacionesController.text,
         'estado': widget.presupuesto['estado'] ?? 'P',
-        // Preparamos las líneas con el campo correcto para API
+        'serie_id': _serieSeleccionadaId,
+        'fecha': _fechaPresupuesto?.toIso8601String(), // 🟢
+        'direccion_entrega_id': _direccionEntregaId, // 🟢
         'lineas': _lineas
             .map(
               (linea) => {
                 'articulo_id': linea.articulo['id'],
                 'cantidad': linea.cantidad,
                 'precio': linea.precio,
-                'tipo_iva': linea
-                    .tipoIva, // 🟢 Campo corregido (reg_iva_vta se mapea en api_service)
+                'tipo_iva': linea.tipoIva,
               },
             )
             .toList(),
       };
 
-      // Actualizar en Velneo API
-      await apiService
+      // LLAMADA A LA API
+      final resultado = await apiService
           .actualizarPresupuesto(widget.presupuesto['id'], presupuestoData)
           .timeout(
             const Duration(seconds: 45),
@@ -377,12 +435,22 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                 throw Exception('Timeout: El servidor tardó demasiado'),
           );
 
+      // OBTENER TOTALES OFICIALES DEL SERVIDOR
+      final totalFinal = resultado['server_total'] ?? _calcularTotal();
+      final baseFinal = resultado['server_base'] ?? _calcularBaseImponible();
+      final ivaFinal = resultado['server_iva'] ?? _calcularTotalIva();
+
       // Actualizar en BD local
       final db = DatabaseHelper.instance;
       await db.actualizarPresupuesto(widget.presupuesto['id'], {
         'cliente_id': _clienteSeleccionado!['id'],
         'observaciones': _observacionesController.text,
-        'total': _calcularTotal(),
+        'serie_id': _serieSeleccionadaId,
+        'fecha': _fechaPresupuesto?.toIso8601String(), // 🟢
+        'direccion_entrega_id': _direccionEntregaId, // 🟢
+        'total': totalFinal,
+        'base_total': baseFinal,
+        'iva_total': ivaFinal,
         'sincronizado': 1,
       });
 
@@ -397,7 +465,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
           'precio': linea.precio,
           'por_descuento': linea.descuento,
           'por_iva': linea.porcentajeIva,
-          'tipo_iva': linea.tipoIva, // 🟢 Guardar IVA en local
+          'tipo_iva': linea.tipoIva,
         });
       }
 
@@ -407,12 +475,9 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       });
 
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            '✅ Presupuesto actualizado correctamente en el servidor',
-          ),
+          content: Text('✅ Presupuesto actualizado correctamente'),
           backgroundColor: Color(0xFF032458),
           duration: Duration(seconds: 2),
         ),
@@ -426,7 +491,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
       });
 
       if (!mounted) return;
-
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -450,7 +514,6 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
         title: Text('Editar Presupuesto #${widget.presupuesto['id']}'),
         backgroundColor: const Color(0xFF162846),
         actions: [
-          // 🟢 BOTÓN DE DEBUG JSON (NUEVO)
           IconButton(
             icon: const Icon(Icons.bug_report, color: Colors.orange),
             onPressed: _mostrarDebugJson,
@@ -484,6 +547,101 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+
+                // 🟢 FILA DE FECHA Y SERIE
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: _seleccionarFecha,
+                        child: InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Fecha',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.calendar_today, size: 20),
+                          ),
+                          child: Text(
+                            _fechaPresupuesto != null
+                                ? '${_fechaPresupuesto!.day}/${_fechaPresupuesto!.month}/${_fechaPresupuesto!.year}'
+                                : '-',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Serie',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 15,
+                          ),
+                        ),
+                        value: _serieSeleccionadaId,
+                        items: _series.map((serie) {
+                          return DropdownMenuItem<int>(
+                            value: serie['id'],
+                            child: Text(
+                              serie['nombre'],
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            _serieSeleccionadaId = value;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // 🟢 DIRECCIÓN DE ENTREGA (SOLO SI TIENE)
+                if (_direccionesCliente.isNotEmpty)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: DropdownButtonFormField<int?>(
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Dirección de Entrega',
+                          border: InputBorder.none,
+                          icon: Icon(Icons.location_on, color: Colors.grey),
+                        ),
+                        value: _direccionEntregaId,
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('Dirección Principal'),
+                          ),
+                          ..._direccionesCliente.map((dir) {
+                            return DropdownMenuItem<int?>(
+                              value: dir['id'],
+                              child: Text(
+                                dir['direccion'],
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (v) =>
+                            setState(() => _direccionEntregaId = v),
+                      ),
+                    ),
+                  ),
+                if (_direccionesCliente.isNotEmpty) const SizedBox(height: 16),
 
                 // Observaciones
                 TextField(
@@ -530,23 +688,10 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.grey[300]!),
                     ),
-                    child: Center(
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.shopping_cart_outlined,
-                            size: 48,
-                            color: Colors.grey[400],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'No hay artículos',
-                            style: TextStyle(
-                              color: Colors.grey[600],
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
+                    child: const Center(
+                      child: Text(
+                        'No hay artículos',
+                        style: TextStyle(color: Colors.grey),
                       ),
                     ),
                   )
@@ -610,44 +755,24 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                                   ),
                               ],
                             ),
-                            const SizedBox(width: 8),
                             PopupMenuButton(
                               icon: const Icon(Icons.more_vert),
                               itemBuilder: (context) => [
                                 const PopupMenuItem(
                                   value: 'editar',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.edit, size: 20),
-                                      SizedBox(width: 8),
-                                      Text('Editar'),
-                                    ],
-                                  ),
+                                  child: Text('Editar'),
                                 ),
                                 const PopupMenuItem(
                                   value: 'eliminar',
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.delete,
-                                        size: 20,
-                                        color: Colors.red,
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        'Eliminar',
-                                        style: TextStyle(color: Colors.red),
-                                      ),
-                                    ],
+                                  child: Text(
+                                    'Eliminar',
+                                    style: TextStyle(color: Colors.red),
                                   ),
                                 ),
                               ],
                               onSelected: (value) {
-                                if (value == 'editar') {
-                                  _editarLinea(index);
-                                } else if (value == 'eliminar') {
-                                  _eliminarLinea(index);
-                                }
+                                if (value == 'editar') _editarLinea(index);
+                                if (value == 'eliminar') _eliminarLinea(index);
                               },
                             ),
                           ],

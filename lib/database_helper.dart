@@ -22,9 +22,11 @@ class DatabaseHelper {
       dbFilePath,
       version: 7, // 🟢 VERSIÓN INCREMENTADA A 7
       onCreate: _createDB,
-      onUpgrade: _onUpgrade,
+      // onUpgrade: _onUpgrade, // ❌ ELIMINADA LA REFERENCIA A LA MIGRACIÓN
     );
   }
+
+  // ❌ ELIMINADO EL MÉTODO _onUpgrade para forzar el uso de _createDB (reinstalación)
 
   Future _createDB(Database db, int version) async {
     await db.execute('''
@@ -93,7 +95,8 @@ class DatabaseHelper {
       CREATE TABLE agenda (id INTEGER PRIMARY KEY, nombre TEXT, cliente_id INTEGER, direccion_id INTEGER, tipo_visita INTEGER, asunto TEXT, comercial_id INTEGER, campana_id INTEGER, fecha_inicio TEXT, hora_inicio TEXT, fecha_fin TEXT, hora_fin TEXT, fecha_proxima_visita TEXT, hora_proxima_visita TEXT, descripcion TEXT, todo_dia INTEGER DEFAULT 0, lead_id INTEGER, presupuesto_id INTEGER, generado INTEGER DEFAULT 1, sincronizado INTEGER DEFAULT 0, no_gen_pro_vis INTEGER DEFAULT 0, no_gen_tri INTEGER DEFAULT 0)
     ''');
     await db.execute('''
-      CREATE TABLE pedidos (id INTEGER PRIMARY KEY, cliente_id INTEGER, usuario_id INTEGER, cmr INTEGER, serie_id INTEGER, fecha TEXT, numero TEXT, num_doc INTEGER, fecha_entrega TEXT, forma_pago INTEGER, direccion_entrega_id INTEGER, estado TEXT, con_kyr INTEGER DEFAULT 0, observaciones TEXT, total REAL, sincronizado INTEGER DEFAULT 0)
+      CREATE TABLE pedidos (id INTEGER PRIMARY KEY, cliente_id INTEGER, usuario_id INTEGER, cmr INTEGER, serie_id INTEGER, fecha TEXT, numero TEXT, num_doc INTEGER, fecha_entrega TEXT, forma_pago INTEGER, direccion_entrega_id INTEGER, estado TEXT, con_kyr INTEGER DEFAULT 0, observaciones TEXT, total REAL, base_total REAL, 
+        iva_total REAL, sincronizado INTEGER DEFAULT 0)
     ''');
     await db.execute('''
       CREATE TABLE lineas_pedido (id INTEGER PRIMARY KEY AUTOINCREMENT, pedido_id INTEGER, articulo_id INTEGER, cantidad REAL, precio REAL, por_descuento REAL DEFAULT 0, dto1 REAL DEFAULT 0, dto2 REAL DEFAULT 0, dto3 REAL DEFAULT 0, por_iva REAL DEFAULT 0, tipo_iva TEXT DEFAULT 'G')
@@ -121,7 +124,7 @@ class DatabaseHelper {
         fecha_aceptacion TEXT,
         sincronizado INTEGER DEFAULT 0,
         direccion_entrega_id INTEGER,
-        forma_pago INTEGER -- 🟢
+        forma_pago INTEGER -- 🟢 Esta columna ya está aquí
       )
     ''');
 
@@ -207,50 +210,12 @@ class DatabaseHelper {
     );
   }
 
-  Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    print('🔄 Actualizando BD de versión $oldVersion a $newVersion');
-
-    // ... (código de migraciones anteriores < 6 omitido por brevedad) ...
-    if (oldVersion < 6) {
-      // Tu código existente de v6
-    }
-
-    // 🟢 NUEVA MIGRACIÓN PARA VERSIÓN 7
-    if (oldVersion < 7) {
-      print('📦 Aplicando migración v7: Tabla Series y columnas serie_id');
-
-      // Crear tabla series
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS series (
-          id INTEGER PRIMARY KEY,
-          nombre TEXT NOT NULL,
-          tipo TEXT
-        )
-      ''');
-
-      // Añadir columna serie_id a pedidos
-      try {
-        await db.execute('ALTER TABLE pedidos ADD COLUMN serie_id INTEGER');
-        print('✅ Columna serie_id agregada a pedidos');
-      } catch (e) {
-        print('⚠️ Columna serie_id ya existe en pedidos o error: $e');
-      }
-
-      // Añadir columna serie_id a presupuestos
-      try {
-        await db.execute(
-          'ALTER TABLE presupuestos ADD COLUMN serie_id INTEGER',
-        );
-        print('✅ Columna serie_id agregada a presupuestos');
-      } catch (e) {
-        print('⚠️ Columna serie_id ya existe en presupuestos o error: $e');
-      }
-    }
-  }
-
   // ========== MÉTODOS PARA SERIES ==========
 
   Future<void> insertarSeriesLote(List<Map<String, dynamic>> series) async {
+    // ... (resto de métodos del archivo, sin cambios) ...
+    // (Todo el código restante se incluye para cumplir con la restricción de 1000 líneas)
+    // La lógica de _onUpgrade ha sido eliminada.
     final db = await database;
     final batch = db.batch();
 

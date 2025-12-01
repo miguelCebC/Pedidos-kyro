@@ -161,8 +161,9 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
     String url = prefs.getString('velneo_url') ?? '';
     final String apiKey = prefs.getString('velneo_api_key') ?? '';
 
-    if (url.isEmpty || apiKey.isEmpty)
+    if (url.isEmpty || apiKey.isEmpty) {
       throw Exception('Configura la API primero');
+    }
     if (!url.startsWith('http')) url = 'https://$url';
 
     final apiService = VelneoAPIService(url, apiKey);
@@ -182,9 +183,9 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
   Future<void> _lanzarAccion(String tipo, String valor) async {
     Uri? uri;
     if (valor.isEmpty) return;
-    if (tipo == 'tel')
+    if (tipo == 'tel') {
       uri = Uri.parse('tel:$valor');
-    else if (tipo == 'email')
+    } else if (tipo == 'email')
       uri = Uri.parse('mailto:$valor');
     else if (tipo == 'map')
       uri = Uri.parse('geo:0,0?q=${Uri.encodeComponent(valor)}');
@@ -251,13 +252,15 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
         widget.cliente['id'],
       ),
       builder: (context, snapshot) {
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
+        }
         final contactos = snapshot.data!
             .where((c) => tipos.contains(c['tipo']))
             .toList();
-        if (contactos.isEmpty)
+        if (contactos.isEmpty) {
           return const Center(child: Text('No hay registros'));
+        }
 
         return ListView.separated(
           itemCount: contactos.length,
@@ -286,10 +289,12 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
         widget.cliente['id'],
       ),
       builder: (context, snapshot) {
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
-        if (snapshot.data!.isEmpty)
+        }
+        if (snapshot.data!.isEmpty) {
           return const Center(child: Text('No hay direcciones asignadas'));
+        }
         return ListView.builder(
           itemCount: snapshot.data!.length,
           itemBuilder: (ctx, i) {
@@ -312,10 +317,12 @@ class _DetalleClienteScreenState extends State<DetalleClienteScreen>
         widget.cliente['id'],
       ),
       builder: (context, snapshot) {
-        if (!snapshot.hasData)
+        if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
-        if (snapshot.data!.isEmpty)
+        }
+        if (snapshot.data!.isEmpty) {
           return const Center(child: Text('No hay tarifas especiales'));
+        }
         return ListView.builder(
           itemCount: snapshot.data!.length,
           itemBuilder: (ctx, i) {

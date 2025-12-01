@@ -59,8 +59,9 @@ class _CatalogoArticulosScreenState extends State<CatalogoArticulosScreen> {
 
       if (articulos.isNotEmpty) {
         await DatabaseHelper.instance.insertarArticulosLote(articulos.cast());
-        if (mounted)
+        if (mounted) {
           _cargarArticulos(reset: true); // Refrescar lista si hay nuevos
+        }
       }
     } catch (e) {
       print("Sync fondo articulos error: $e");
