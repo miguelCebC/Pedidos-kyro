@@ -37,7 +37,6 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
 
   Future<void> recargarPresupuestos() => _cargarDatos();
 
-  // 🟢 MÉTODO CORREGIDO: Sincronización silenciosa con limpieza
   Future<void> _sincronizarFondo() async {
     if (_sincronizando) return;
     setState(() => _sincronizando = true);
@@ -53,31 +52,49 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
         apiKey,
       );
 
-      // 1. Descargar Presupuestos
+      final db = DatabaseHelper.instance;
+
+      // 1. Descargar Presupuestos (Cabeceras)
       final presupuestosServer = await api.obtenerPresupuestos();
+
       if (presupuestosServer.isNotEmpty) {
-        await DatabaseHelper.instance.insertarPresupuestosLote(
+        await db.insertarPresupuestosLote(
           presupuestosServer.cast<Map<String, dynamic>>(),
         );
       }
 
       // 2. Descargar Líneas
       final lineasServer = await api.obtenerTodasLineasPresupuesto();
-      if (lineasServer.isNotEmpty) {
-        // 🟢 FIX: Limpiar líneas viejas de presupuestos sincronizados
-        final db = await DatabaseHelper.instance.database;
-        await db.rawDelete(
-          'DELETE FROM lineas_presupuesto WHERE presupuesto_id IN (SELECT id FROM presupuestos WHERE sincronizado = 1)',
-        );
 
-        await DatabaseHelper.instance.insertarLineasPresupuestoLote(
+      if (lineasServer.isNotEmpty) {
+        // 🟢 FIX CRÍTICO: No borrar todas las líneas de golpe.
+        // Solo borramos las líneas de los presupuestos que realmente hemos descargado (cabeceras).
+        // Esto evita que si la API pagina o filtra, borremos líneas de otros presupuestos.
+
+        if (presupuestosServer.isNotEmpty) {
+          // Extraemos los IDs de los presupuestos descargados
+          final idsDescargados = presupuestosServer
+              .map((p) => p['id'])
+              .join(',');
+
+          if (idsDescargados.isNotEmpty) {
+            final database = await db.database;
+            // Borramos solo las líneas asociadas a los presupuestos que acabamos de traer
+            await database.rawDelete(
+              'DELETE FROM lineas_presupuesto WHERE presupuesto_id IN ($idsDescargados)',
+            );
+          }
+        }
+
+        // Insertamos las nuevas líneas
+        await db.insertarLineasPresupuestoLote(
           lineasServer.cast<Map<String, dynamic>>(),
         );
       }
 
       if (mounted) {
         _cargarDatos();
-        print("✅ Presupuestos sincronizados y líneas limpiadas correctamente");
+        print("✅ Presupuestos sincronizados correctamente (Fix aplicado)");
       }
     } catch (e) {
       print("⚠️ Error en sync fondo presupuestos: $e");

@@ -18,12 +18,7 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final dbFilePath = path_helper.join(dbPath, filePath);
 
-    return await openDatabase(
-      dbFilePath,
-      version: 7, // 🟢 VERSIÓN INCREMENTADA A 7
-      onCreate: _createDB,
-      // onUpgrade: _onUpgrade, // ❌ ELIMINADA LA REFERENCIA A LA MIGRACIÓN
-    );
+    return await openDatabase(dbFilePath, version: 7, onCreate: _createDB);
   }
 
   // ❌ ELIMINADO EL MÉTODO _onUpgrade para forzar el uso de _createDB (reinstalación)
@@ -210,12 +205,7 @@ class DatabaseHelper {
     );
   }
 
-  // ========== MÉTODOS PARA SERIES ==========
-
   Future<void> insertarSeriesLote(List<Map<String, dynamic>> series) async {
-    // ... (resto de métodos del archivo, sin cambios) ...
-    // (Todo el código restante se incluye para cumplir con la restricción de 1000 líneas)
-    // La lógica de _onUpgrade ha sido eliminada.
     final db = await database;
     final batch = db.batch();
 
@@ -1088,7 +1078,7 @@ class DatabaseHelper {
     await db.delete('poblaciones');
     await db.delete('zonas_tecnicas');
     await db.delete('provincias');
-    await db.delete('series'); // 🟢 Limpiar también series
+    await db.delete('series');
   }
 
   Future<void> limpiarPedidos() async {

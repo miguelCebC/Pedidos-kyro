@@ -693,89 +693,47 @@ class VelneoAPIService {
   ) async {
     final httpClient = HttpClient()
       ..badCertificateCallback = ((c, h, p) => true);
-
     try {
-      // 1. Preparar JSON de Cabecera
-      final pedidoVelneo = {
-        'emp': '1',
-        'emp_div': '1',
-        'clt': pedido['cliente_id'],
-        if (pedido['observaciones'] != null) 'obs': pedido['observaciones'],
-        if (pedido['con_kyr'] != null) 'con_kyr': pedido['con_kyr'],
-      };
-
-      // ⚠️ CAMBIO IMPORTANTE: No borramos líneas todavía.
-      // Primero intentamos actualizar la cabecera.
-
-      // 2. Actualizar Cabecera
-      final request = await httpClient.postUrl(
+      // 1. Cabecera
+      final req = await httpClient.postUrl(
         Uri.parse(_buildUrl('/VTA_PED_G/$pedidoId')),
       );
-      request.headers.set('Content-Type', 'application/json');
-      request.write(json.encode(pedidoVelneo));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(
+        json.encode({
+          'clt': pedido['cliente_id'],
+          'obs': pedido['observaciones'],
+          if (pedido['con_kyr'] != null) 'con_kyr': pedido['con_kyr'],
+        }),
+      );
+      final res = await req.close();
+      final stringData = await res.transform(utf8.decoder).join();
 
-      final response = await request.close();
-      final stringData = await response.transform(utf8.decoder).join();
-
-      // 3. VERIFICAR ÉXITO
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        // ✅ Solo si la cabecera se guardó bien, procesamos las líneas
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        // 2. Líneas con Seguridad
         if (pedido.containsKey('lineas')) {
-          // A. Borrar líneas antiguas
-          final lineasActuales = await obtenerLineasPedido(pedidoId);
-          for (var l in lineasActuales) {
+          final actuales = await obtenerLineasPedido(pedidoId);
+          for (var l in actuales) {
+            // 🛑 SEGURIDAD: ID del pedido debe coincidir
+            if (l['pedido_id'].toString() != pedidoId.toString()) continue;
+
             await httpClient
                 .deleteUrl(Uri.parse(_buildUrl('/VTA_PED_LIN_G/${l['id']}')))
-                .then((req) => req.close())
-                .then((res) => res.drain());
+                .then((r) => r.close())
+                .then((r) => r.drain());
           }
-
-          // B. Crear nuevas líneas
           if (pedido['lineas'] != null) {
-            for (var linea in pedido['lineas']) {
-              // Llamamos a la función auxiliar que gestiona su propia conexión
-              await crearLineaPedido(pedidoId, linea);
-            }
+            for (var l in pedido['lineas']) await crearLineaPedido(pedidoId, l);
           }
         }
-
-        // 4. Obtener totales calculados por el servidor
-        final respuestaJson = json.decode(stringData);
-        double? nuevoTotal, nuevaBase, nuevoIva;
-
-        dynamic cabeceraActualizada;
-        if (respuestaJson is Map<String, dynamic>) {
-          if (respuestaJson.containsKey('vta_ped_g') &&
-              (respuestaJson['vta_ped_g'] as List).isNotEmpty) {
-            cabeceraActualizada = respuestaJson['vta_ped_g'][0];
-          } else if (respuestaJson.containsKey('id')) {
-            cabeceraActualizada = respuestaJson;
-          }
-        }
-
-        if (cabeceraActualizada != null) {
-          nuevoTotal = _convertirADouble(cabeceraActualizada['tot_ped']);
-          nuevaBase = _convertirADouble(cabeceraActualizada['bas_tot']);
-          nuevoIva = _convertirADouble(cabeceraActualizada['iva_tot']);
-        }
-
-        return {
-          'id': pedidoId,
-          'success': true,
-          'server_total': nuevoTotal,
-          'server_base': nuevaBase,
-          'server_iva': nuevoIva,
-        };
+        return _extraerTotales(json.decode(stringData), 'vta_ped_g', pedidoId);
       }
-
-      // Si llegamos aquí, falló la cabecera. Lanzamos error y NO se borraron líneas.
-      throw Exception('Error al actualizar cabecera: $stringData');
+      throw Exception('Error actualizar pedido: $stringData');
     } finally {
       httpClient.close();
     }
   }
 
-  // En lib/services/api_service.dart
   // 🟢 1. OBTENER FORMAS DE PAGO (Con estructura: id, name)
   Future<List<dynamic>> obtenerFormasPago() async {
     try {
@@ -940,103 +898,51 @@ class VelneoAPIService {
   ) async {
     final httpClient = HttpClient()
       ..badCertificateCallback = ((c, h, p) => true);
-
     try {
-      final presupuestoVelneo = {
-        'emp': '1',
-        'emp_div': '1',
-        'clt': presupuesto['cliente_id'],
-        if (presupuesto['observaciones'] != null)
-          'obs': presupuesto['observaciones'],
-        if (presupuesto['estado'] != null) 'est': presupuesto['estado'],
-        if (presupuesto['serie_id'] != null) 'ser': presupuesto['serie_id'],
-      };
-
-      // 1. Actualizar Cabecera PRIMERO
-      final request = await httpClient.postUrl(
+      final req = await httpClient.postUrl(
         Uri.parse(_buildUrl('/VTA_PRE_G/$presupuestoId')),
       );
-      request.headers.set('Content-Type', 'application/json');
-      request.write(json.encode(presupuestoVelneo));
+      req.headers.set('Content-Type', 'application/json');
+      req.write(
+        json.encode({
+          'clt': presupuesto['cliente_id'],
+          'obs': presupuesto['observaciones'],
+          'est': presupuesto['estado'],
+          'ser': presupuesto['serie_id'],
+        }),
+      );
+      final res = await req.close();
+      final stringData = await res.transform(utf8.decoder).join();
 
-      final response = await request.close();
-      final stringData = await response.transform(utf8.decoder).join();
-
-      // 2. Verificar éxito
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        // ✅ Cabecera OK, procedemos con líneas
+      if (res.statusCode >= 200 && res.statusCode < 300) {
         if (presupuesto.containsKey('lineas')) {
-          // A. Borrar líneas antiguas
-          final lineasActuales = await obtenerLineasPresupuesto(presupuestoId);
-          for (var l in lineasActuales) {
+          final actuales = await obtenerLineasPresupuesto(presupuestoId);
+          for (var l in actuales) {
+            // 🛑 SEGURIDAD: ID del presupuesto debe coincidir
+            if (l['presupuesto_id'].toString() != presupuestoId.toString())
+              continue;
+
             await httpClient
                 .deleteUrl(Uri.parse(_buildUrl('/VTA_PRE_LIN_G/${l['id']}')))
-                .then((req) => req.close())
-                .then((res) => res.drain());
+                .then((r) => r.close())
+                .then((r) => r.drain());
           }
-
-          // B. Crear nuevas líneas
           if (presupuesto['lineas'] != null) {
-            for (var linea in presupuesto['lineas']) {
-              final lineaData = {
-                'vta_pre': presupuestoId,
-                'art': linea['articulo_id'],
-                'can': (linea['cantidad'] as num).toDouble(),
-                'pre': (linea['precio'] as num).toDouble(),
-                'reg_iva_vta': linea['tipo_iva'] ?? 'G',
-                // Añade aquí descuentos si los tienes mapeados
-              };
-              // Usamos la misma conexión httpClient para optimizar, abriendo nueva request
-              await httpClient
-                  .postUrl(Uri.parse(_buildUrl('/VTA_PRE_LIN_G')))
-                  .then((req) {
-                    req.headers.set('Content-Type', 'application/json');
-                    req.write(json.encode(lineaData));
-                    return req.close();
-                  })
-                  .then((res) => res.drain());
-            }
+            for (var l in presupuesto['lineas'])
+              await crearLineaPresupuesto(presupuestoId, l);
           }
         }
-
-        // 3. Leer totales
-        final respuestaJson = json.decode(stringData);
-        double? nuevoTotal, nuevaBase, nuevoIva;
-
-        dynamic cabecera;
-        if (respuestaJson is Map<String, dynamic>) {
-          if (respuestaJson.containsKey('vta_pre_g') &&
-              (respuestaJson['vta_pre_g'] as List).isNotEmpty) {
-            cabecera = respuestaJson['vta_pre_g'][0];
-          } else if (respuestaJson.containsKey('id')) {
-            cabecera = respuestaJson;
-          }
-        }
-
-        if (cabecera != null) {
-          nuevoTotal = _convertirADouble(cabecera['tot_pre']);
-          nuevaBase = _convertirADouble(cabecera['bas_tot']);
-          nuevoIva = _convertirADouble(cabecera['iva_tot']);
-        }
-
-        return {
-          'id': presupuestoId,
-          'success': true,
-          'server_total': nuevoTotal,
-          'server_base': nuevaBase,
-          'server_iva': nuevoIva,
-        };
+        return _extraerTotales(
+          json.decode(stringData),
+          'vta_pre_g',
+          presupuestoId,
+        );
       }
-      throw Exception('Error actualizar presupuesto: $stringData');
+      throw Exception('Error act presupuesto: $stringData');
     } finally {
       httpClient.close();
     }
   }
-
-  // ===============================================
-  // 🟢 FASE 1: SINCRONIZACIÓN DE MAESTROS (Splash Screen)
-  // ===============================================
-  // Descarga todo lo que NO tiene una pantalla propia y es necesario para funcionar.
 
   // 🟢 1. OBTENER FOTO PEDIDO (Sin guardar en local)
   Future<String?> obtenerFotoPedido(int pedidoId) async {
@@ -1080,6 +986,46 @@ class VelneoAPIService {
       print('❌ Error obteniendo foto: $e');
       return null;
     }
+  }
+
+  Map<String, dynamic> _extraerTotales(
+    dynamic jsonRes,
+    String keyLista,
+    int defaultId,
+  ) {
+    dynamic obj;
+    if (jsonRes is Map<String, dynamic>) {
+      if (jsonRes.containsKey(keyLista) &&
+          (jsonRes[keyLista] as List).isNotEmpty) {
+        obj = jsonRes[keyLista][0];
+      } else if (jsonRes.containsKey('id')) {
+        obj = jsonRes;
+      }
+    }
+    if (obj != null) {
+      // Claves pueden ser tot_ped (pedidos) o tot_pre (presupuestos)
+      double total = _convertirADouble(obj['tot_ped'] ?? obj['tot_pre']);
+      return {
+        'id': obj['id'] ?? defaultId,
+        'server_total': total,
+        'server_base': _convertirADouble(obj['bas_tot']),
+        'server_iva': _convertirADouble(obj['iva_tot']),
+        'success': true,
+      };
+    }
+    return {'id': defaultId, 'success': true};
+  }
+
+  int? _extraerId(dynamic jsonRes, String keyLista) {
+    if (jsonRes is Map<String, dynamic>) {
+      if (jsonRes.containsKey(keyLista) &&
+          (jsonRes[keyLista] as List).isNotEmpty) {
+        return jsonRes[keyLista][0]['id'];
+      } else if (jsonRes.containsKey('id')) {
+        return jsonRes['id'];
+      }
+    }
+    return null;
   }
 
   // 🟢 2. ACTUALIZAR FOTO PEDIDO (Subir o Borrar)
@@ -1867,195 +1813,118 @@ class VelneoAPIService {
 
   Future<List<dynamic>> obtenerLineasPedido(int pedidoId) async {
     try {
-      _log('📄 Descargando líneas del pedido $pedidoId...');
-
+      // Filtro estricto por ID de pedido
       final url = _buildUrlWithParams('/VTA_PED_LIN_G', {
-        'vta_ped': pedidoId.toString(),
+        'filter[vta_ped]': pedidoId.toString(),
         'page[size]': '100',
       });
-
-      _log('🌐 URL líneas pedido: $url');
-
       final response = await _getWithSSL(
         url,
       ).timeout(const Duration(seconds: 30));
 
-      _log('📥 Status code líneas pedido: ${response.statusCode}');
-
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
-        if (data['vta_ped_lin_g'] != null && data['vta_ped_lin_g'] is List) {
-          final lineasList = (data['vta_ped_lin_g'] as List).map((linea) {
-            return {
-              'id': linea['id'],
-              'pedido_id': linea['vta_ped'] ?? pedidoId,
-              'articulo_id': linea['art'] ?? 0,
-              'cantidad': _convertirADouble(linea['can_ped']),
-              'precio': _convertirADouble(linea['pre']),
-              'por_descuento': _convertirADouble(linea['por_dto']),
-              'dto1': _convertirADouble(linea['dto1']),
-              'dto2': _convertirADouble(linea['dto2']),
-              'dto3': _convertirADouble(linea['dto3']),
-              // ----------------
-              'por_iva': _convertirADouble(linea['iva_pje']),
-              'tipo_iva': linea['reg_iva_vta'] ?? 'G',
-            };
-          }).toList();
-
-          return lineasList;
-        } else {
-          return [];
+        final lista = data['vta_ped_lin_g'] ?? data['VTA_PED_LIN_G'];
+        if (lista != null && lista is List) {
+          return lista
+              .map(
+                (l) => {
+                  'id': l['id'],
+                  'pedido_id': l['vta_ped'],
+                  'articulo_id': l['art'],
+                  'cantidad': _convertirADouble(l['can_ped']), // Campo can_ped
+                  'precio': _convertirADouble(l['pre']),
+                  'tipo_iva': l['reg_iva_vta'] ?? 'G',
+                  'por_descuento': _convertirADouble(l['por_dto']),
+                  'dto1': _convertirADouble(l['dto1']),
+                  'dto2': _convertirADouble(l['dto2']),
+                  'dto3': _convertirADouble(l['dto3']),
+                },
+              )
+              .toList();
         }
       }
-      throw Exception(
-        'Error al obtener líneas de pedido: ${response.statusCode}',
-      );
+      return [];
     } catch (e) {
-      _log('❌ Error en obtenerLineasPedido: $e');
       return [];
     }
   }
 
   Future<List<dynamic>> obtenerLineasPresupuesto(int presupuestoId) async {
     try {
-      _log('📄 Descargando líneas del presupuesto $presupuestoId...');
-
+      // Filtro estricto por ID de presupuesto
       final url = _buildUrlWithParams('/VTA_PRE_LIN_G', {
-        'vta_pre': presupuestoId.toString(),
+        'filter[vta_pre]': presupuestoId.toString(),
         'page[size]': '100',
       });
-
       final response = await _getWithSSL(
         url,
       ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-
-        if (data['vta_pre_lin_g'] != null && data['vta_pre_lin_g'] is List) {
-          final lineasList = (data['vta_pre_lin_g'] as List).map((linea) {
-            return {
-              'id': linea['id'], // <--- ¡IMPORTANTE! Necesario para borrar
-              'presupuesto_id': linea['vta_pre'] ?? presupuestoId,
-              'articulo_id': linea['art'] ?? 0,
-              'cantidad': _convertirADouble(linea['can']),
-              'precio': _convertirADouble(linea['pre']),
-              'por_descuento': _convertirADouble(linea['por_dto']),
-              'por_iva': _convertirADouble(linea['iva_pje']),
-              'tipo_iva': linea['reg_iva_vta'] ?? 'G',
-            };
-          }).toList();
-
-          return lineasList;
-        } else {
-          return [];
+        final lista = data['vta_pre_lin_g'] ?? data['VTA_PRE_LIN_G'];
+        if (lista != null && lista is List) {
+          return lista
+              .map(
+                (l) => {
+                  'id': l['id'],
+                  'presupuesto_id': l['vta_pre'],
+                  'articulo_id': l['art'],
+                  'cantidad': _convertirADouble(l['can']), // Campo can
+                  'precio': _convertirADouble(l['pre']),
+                  'tipo_iva': l['reg_iva_vta'] ?? 'G',
+                  'por_descuento': _convertirADouble(l['por_dto']),
+                  // mapeo resto dtos...
+                },
+              )
+              .toList();
         }
       }
-      throw Exception(
-        'Error al obtener líneas de presupuesto: ${response.statusCode}',
-      );
+      return [];
     } catch (e) {
-      _log('❌ Error en obtenerLineasPresupuesto: $e');
       return [];
     }
   }
 
   Future<Map<String, dynamic>> crearPedido(Map<String, dynamic> pedido) async {
+    final httpClient = HttpClient()
+      ..badCertificateCallback = ((c, h, p) => true);
     try {
-      final pedidoVelneo = {
+      final header = {
         'emp': '1',
-        'emp_div': '1',
         'clt': pedido['cliente_id'],
         'fch': pedido['fecha'],
+        if (pedido['cmr'] != null) 'cmr': pedido['cmr'],
+        if (pedido['serie_id'] != null) 'ser': pedido['serie_id'],
+        if (pedido['direccion_entrega_id'] != null)
+          'dir_env': pedido['direccion_entrega_id'],
+        'obs': pedido['observaciones'] ?? '',
       };
 
-      // 🟢 CAMBIO: Usamos 'dir_env'
-      if (pedido['direccion_entrega_id'] != null &&
-          pedido['direccion_entrega_id'] != 0) {
-        pedidoVelneo['dir_env'] = pedido['direccion_entrega_id'];
-      }
+      final request = await httpClient.postUrl(
+        Uri.parse(_buildUrl('/VTA_PED_G')),
+      );
+      request.headers.set('Content-Type', 'application/json');
+      request.write(json.encode(header));
 
-      if (pedido['cmr'] != null) {
-        pedidoVelneo['cmr'] = pedido['cmr'];
-      }
-      if (pedido['serie_id'] != null) {
-        pedidoVelneo['ser'] = pedido['serie_id'];
-      }
+      final response = await request.close();
+      final stringData = await response.transform(utf8.decoder).join();
 
-      print('📄 Creando pedido en Velneo: $pedidoVelneo');
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final res = json.decode(stringData);
+        final nuevoId = _extraerId(res, 'vta_ped_g');
 
-      final httpClient = HttpClient()
-        ..badCertificateCallback =
-            ((X509Certificate cert, String host, int port) => true)
-        ..connectionTimeout = const Duration(seconds: 30);
-
-      try {
-        final request = await httpClient
-            .postUrl(Uri.parse(_buildUrl('/VTA_PED_G')))
-            .timeout(const Duration(seconds: 30));
-
-        request.headers.set('Content-Type', 'application/json');
-        request.headers.set('Accept', 'application/json');
-        request.headers.set('User-Agent', 'Flutter App');
-        request.write(json.encode(pedidoVelneo));
-
-        final response = await request.close().timeout(
-          const Duration(seconds: 30),
-        );
-        final stringData = await response
-            .transform(utf8.decoder)
-            .join()
-            .timeout(const Duration(seconds: 10));
-
-        print('📥 Respuesta crear pedido - Status: ${response.statusCode}');
-
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          final respuesta = json.decode(stringData);
-          int? pedidoId;
-
-          final listaRaw = respuesta['vta_ped_g'] ?? respuesta['VTA_PED_G'];
-
-          if (listaRaw != null && listaRaw is List && (listaRaw).isNotEmpty) {
-            final primerElemento = listaRaw[0];
-            pedidoId =
-                _parseIntSeguro(primerElemento['id']) ??
-                _parseIntSeguro(primerElemento['ID']);
-          } else {
-            pedidoId =
-                _parseIntSeguro(respuesta['id']) ??
-                _parseIntSeguro(respuesta['ID']);
+        if (nuevoId != null && pedido['lineas'] != null) {
+          for (var linea in pedido['lineas']) {
+            await crearLineaPedido(nuevoId, linea);
           }
-
-          if (pedidoId == null) {
-            throw Exception(
-              'No se pudo obtener el ID del pedido creado. Respuesta: $stringData',
-            );
-          }
-
-          print('✅ Pedido creado con ID: $pedidoId');
-
-          int lineasOk = 0;
-          if (pedido['lineas'] != null) {
-            for (var linea in pedido['lineas']) {
-              try {
-                await crearLineaPedido(pedidoId, linea);
-                lineasOk++;
-              } catch (e) {
-                print('  ✗ Error línea: $e');
-              }
-            }
-          }
-
-          return {'id': pedidoId, 'lineas_creadas': lineasOk, 'success': true};
         }
-        throw Exception('Error HTTP ${response.statusCode}: $stringData');
-      } finally {
-        httpClient.close();
+        return _extraerTotales(res, 'vta_ped_g', nuevoId ?? 0);
       }
-    } catch (e) {
-      print('❌ Error en crearPedido: $e');
-      rethrow;
+      throw Exception('Error pedido: $stringData');
+    } finally {
+      httpClient.close();
     }
   }
 
@@ -2064,173 +1933,123 @@ class VelneoAPIService {
     Map<String, dynamic> linea,
   ) async {
     final httpClient = HttpClient()
-      ..badCertificateCallback = ((cert, host, port) => true)
-      ..connectionTimeout = const Duration(seconds: 30);
-
+      ..badCertificateCallback = ((c, h, p) => true);
     try {
-      // Preparamos el objeto JSON con TODOS los campos necesarios
       final lineaVelneo = {
         'vta_ped': pedidoId,
         'emp': '1',
         'art': linea['articulo_id'],
-        'can_ped': _convertirADouble(linea['cantidad']),
+        'can_ped': _convertirADouble(linea['cantidad']), // Campo can_ped
         'pre': _convertirADouble(linea['precio']),
-        'reg_iva_vta': linea['tipo_iva'] ?? 'G', // IVA
-        // Descuentos en cascada
+        'reg_iva_vta': linea['tipo_iva'] ?? linea['reg_iva_vta'] ?? 'G',
         'dto1': _convertirADouble(linea['dto1']),
         'dto2': _convertirADouble(linea['dto2']),
         'dto3': _convertirADouble(linea['dto3']),
-
-        // Tipo de descuento (0=%, 1=Importe)
-        //'tip_dto': linea['tipo_dto'] ?? 0,
       };
 
-      // Compatibilidad: Si hay descuento general, lo mandamos también
-      if (linea['por_dto'] != null) {
-        lineaVelneo['por_dto'] = _convertirADouble(linea['por_dto']);
-      }
+      // Gestión de descuento único
+      double dto = _convertirADouble(linea['por_dto']);
+      if (dto == 0) dto = _convertirADouble(linea['por_descuento']);
+      if (dto == 0) dto = _convertirADouble(linea['descuento']);
+      if (dto > 0) lineaVelneo['por_dto'] = dto;
 
       final request = await httpClient.postUrl(
         Uri.parse(_buildUrl('/VTA_PED_LIN_G')),
       );
       request.headers.set('Content-Type', 'application/json');
-      request.headers.set('Accept', 'application/json');
       request.write(json.encode(lineaVelneo));
 
       final response = await request.close();
-      final stringData = await response.transform(utf8.decoder).join();
+      await response.drain(); // Limpiar respuesta
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return json.decode(stringData);
+        return {'success': true};
       }
-      throw Exception('Error línea (${response.statusCode}): $stringData');
+      throw Exception('Error línea pedido: ${response.statusCode}');
     } finally {
       httpClient.close();
     }
-  }
-
-  int? _parseIntSeguro(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is String) {
-      if (value.isEmpty) return null;
-      return int.tryParse(value);
-    }
-    return null;
   }
 
   Future<Map<String, dynamic>> crearPresupuesto(
     Map<String, dynamic> presupuesto,
   ) async {
     final httpClient = HttpClient()
-      ..badCertificateCallback =
-          ((X509Certificate cert, String host, int port) => true)
-      ..connectionTimeout = const Duration(seconds: 30);
-
+      ..badCertificateCallback = ((c, h, p) => true);
     try {
-      print('📝 Creando presupuesto en Velneo...');
-
-      final presupuestoVelneo = {
+      final header = {
         'emp': '1',
-        'emp_div': '1',
         'clt': presupuesto['cliente_id'],
         'obs': presupuesto['observaciones'] ?? '',
+        if (presupuesto['comercial_id'] != null)
+          'cmr': presupuesto['comercial_id'],
+        if (presupuesto['serie_id'] != null) 'ser': presupuesto['serie_id'],
       };
 
-      if (presupuesto['comercial_id'] != null &&
-          presupuesto['comercial_id'] != 0) {
-        presupuestoVelneo['cmr'] = presupuesto['comercial_id'];
-      }
-
-      // 🟢 NUEVO: Asignar Serie
-      if (presupuesto['serie_id'] != null) {
-        presupuestoVelneo['ser'] = presupuesto['serie_id'];
-      }
-
-      final jsonData = json.encode(presupuestoVelneo);
-      print('📤 JSON enviado: $jsonData');
-
-      final request = await httpClient
-          .postUrl(Uri.parse(_buildUrl('/VTA_PRE_G')))
-          .timeout(const Duration(seconds: 30));
-
-      request.headers.set('Content-Type', 'application/json; charset=utf-8');
-      request.headers.set('Accept', 'application/json');
-      request.headers.set('User-Agent', 'Flutter App');
-      request.write(jsonData);
-
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
+      final request = await httpClient.postUrl(
+        Uri.parse(_buildUrl('/VTA_PRE_G')),
       );
-      final stringData = await response
-          .transform(utf8.decoder)
-          .join()
-          .timeout(const Duration(seconds: 10));
+      request.headers.set('Content-Type', 'application/json');
+      request.write(json.encode(header));
 
-      print('📥 Respuesta - Status: ${response.statusCode}');
+      final response = await request.close();
+      final stringData = await response.transform(utf8.decoder).join();
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final respuesta = json.decode(stringData);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final res = json.decode(stringData);
+        final nuevoId = _extraerId(res, 'vta_pre_g');
 
-        int? presupuestoId;
-        if (respuesta['vta_pre_g'] != null &&
-            respuesta['vta_pre_g'] is List &&
-            (respuesta['vta_pre_g'] as List).isNotEmpty) {
-          presupuestoId = respuesta['vta_pre_g'][0]['id'];
-        } else if (respuesta['id'] != null) {
-          presupuestoId = respuesta['id'];
-        }
-
-        if (presupuestoId == null) {
-          throw Exception('No se pudo obtener el ID del presupuesto');
-        }
-
-        print('✅ Presupuesto creado con ID $presupuestoId');
-
-        int lineasCreadas = 0;
-        if (presupuesto['lineas'] != null) {
+        if (nuevoId != null && presupuesto['lineas'] != null) {
           for (var linea in presupuesto['lineas']) {
-            try {
-              final lineaData = {
-                'vta_pre': presupuestoId,
-                'art': linea['articulo_id'],
-                'can': linea['cantidad'],
-                'pre': linea['precio'],
-              };
-
-              final lineaRequest = await httpClient
-                  .postUrl(Uri.parse(_buildUrl('/VTA_PRE_LIN_G')))
-                  .timeout(const Duration(seconds: 30));
-
-              lineaRequest.headers.set(
-                'Content-Type',
-                'application/json; charset=utf-8',
-              );
-              lineaRequest.headers.set('Accept', 'application/json');
-              lineaRequest.write(json.encode(lineaData));
-
-              final lineaResponse = await lineaRequest.close();
-              if (lineaResponse.statusCode == 200 ||
-                  lineaResponse.statusCode == 201) {
-                lineasCreadas++;
-              }
-            } catch (e) {
-              print('⚠️ Error al crear línea: $e');
-            }
+            await crearLineaPresupuesto(nuevoId, linea);
           }
         }
-
-        return {
-          'id': presupuestoId,
-          'lineas_creadas': lineasCreadas,
-          'success': true,
-        };
+        return _extraerTotales(res, 'vta_pre_g', nuevoId ?? 0);
       }
+      throw Exception('Error crear presupuesto: $stringData');
+    } finally {
+      httpClient.close();
+    }
+  }
 
-      throw Exception('Error HTTP ${response.statusCode}');
-    } catch (e) {
-      print('❌ Error al crear presupuesto: $e');
-      rethrow;
+  Future<Map<String, dynamic>> crearLineaPresupuesto(
+    int presupuestoId,
+    Map<String, dynamic> linea,
+  ) async {
+    final httpClient = HttpClient()
+      ..badCertificateCallback = ((c, h, p) => true);
+    try {
+      final lineaVelneo = {
+        'vta_pre': presupuestoId,
+        'emp': '1',
+        'art': linea['articulo_id'],
+        'can': _convertirADouble(linea['cantidad']), // Campo can
+        'pre': _convertirADouble(linea['precio']),
+        // 🟢 Asegurar valor por defecto para IVA
+        'reg_iva_vta': linea['tipo_iva'] ?? linea['reg_iva_vta'] ?? 'G',
+        'dto1': _convertirADouble(linea['dto1']),
+        'dto2': _convertirADouble(linea['dto2']),
+        'dto3': _convertirADouble(linea['dto3']),
+      };
+
+      double dto = _convertirADouble(linea['por_dto']);
+      if (dto == 0) dto = _convertirADouble(linea['por_descuento']);
+      if (dto == 0) dto = _convertirADouble(linea['descuento']);
+      if (dto > 0) lineaVelneo['por_dto'] = dto;
+
+      final request = await httpClient.postUrl(
+        Uri.parse(_buildUrl('/VTA_PRE_LIN_G')),
+      );
+      request.headers.set('Content-Type', 'application/json');
+      request.write(json.encode(lineaVelneo));
+
+      final response = await request.close();
+      await response.drain();
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return {'success': true};
+      }
+      throw Exception('Error línea presupuesto: ${response.statusCode}');
     } finally {
       httpClient.close();
     }
