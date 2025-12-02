@@ -91,7 +91,7 @@ class _SplashScreenState extends State<SplashScreen> {
             const Icon(Icons.sync, size: 80, color: Colors.white),
             const SizedBox(height: 24),
             const Text(
-              'CRM Velneo',
+              'TecERP',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 24,

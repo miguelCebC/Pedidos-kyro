@@ -343,9 +343,6 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                             : FontWeight.normal,
                       ),
                     ),
-                    subtitle: _clienteSeleccionado != null
-                        ? Text('ID: ${_clienteSeleccionado!['id']}')
-                        : null,
                     trailing: const Icon(Icons.search),
                     onTap: _seleccionarCliente,
                   ),

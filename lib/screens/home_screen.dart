@@ -104,14 +104,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void _construirMenu() {
     _menuOptions = [
       {
-        'title': 'Catálogo de Artículos',
+        'title': 'Artículos',
         'icon': Icons.inventory_2,
         'screen': const CatalogoArticulosScreen(),
         'fab_icon': null,
         'fab_action': null,
       },
       {
-        'title': 'Lista de Pedidos',
+        'title': 'Pedidos',
         'icon': Icons.shopping_cart,
         'screen': ListaPedidosScreen(key: _pedidosKey),
         'fab_icon': Icons.add,
@@ -124,7 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       },
       {
-        'title': 'Cartera de Clientes',
+        'title': 'Clientes',
         'icon': Icons.people,
         'screen': CatalogoClientesScreen(key: _clientesKey),
         'fab_icon': Icons.add,
@@ -166,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         },
         {
-          'title': 'Gestión de Leads',
+          'title': 'Leads',
           'icon': Icons.filter_alt,
           'screen': const LeadsScreen(),
           'fab_icon': Icons.add,
@@ -269,11 +269,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   fontSize: 18,
                 ),
               ),
-              accountEmail: const Text("CRM Velneo v7"),
-              currentAccountPicture: const CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Icon(Icons.person, size: 40, color: Color(0xFF032458)),
-              ),
+              accountEmail: const Text("TecERP"),
             ),
 
             Expanded(

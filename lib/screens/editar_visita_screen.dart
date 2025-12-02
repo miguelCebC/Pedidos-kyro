@@ -645,9 +645,7 @@ class _EditarVisitaScreenState extends State<EditarVisitaScreen> {
                             : FontWeight.normal,
                       ),
                     ),
-                    subtitle: _clienteSeleccionado != null
-                        ? Text('ID: ${_clienteSeleccionado!['id']}')
-                        : const Text('Toca para buscar'),
+
                     trailing: const Icon(Icons.search),
                     onTap: _seleccionarCliente,
                   ),

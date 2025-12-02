@@ -359,7 +359,9 @@ class ListaPedidosScreenState extends State<ListaPedidosScreen> {
                               builder: (_) => DetallePedidoScreen(pedido: p),
                             ),
                           );
-                          _cargarPedidos();
+                          if (mounted) {
+                            _cargarPedidos();
+                          }
                         },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),

@@ -566,7 +566,17 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
             ),
           ),
           const SizedBox(height: 16),
-
+          TextField(
+            controller: _diasVisitaController,
+            decoration: const InputDecoration(
+              labelText: 'Días por defecto próxima visita',
+              hintText: 'Ej: 30',
+              border: OutlineInputBorder(),
+              suffixText: 'días',
+            ),
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 16),
           ElevatedButton.icon(
             onPressed: _guardarConfiguracion,
             icon: const Icon(Icons.save),

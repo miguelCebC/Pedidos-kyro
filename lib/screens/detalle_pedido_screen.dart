@@ -42,24 +42,59 @@ class _DetallePedidoScreenState extends State<DetallePedidoScreen>
   @override
   void initState() {
     super.initState();
-    _pedido = widget.pedido; // Inicializamos copia local
+    _pedido = widget.pedido;
     _tabController = TabController(length: 4, vsync: this);
 
     final conKyrVal = _pedido['con_kyr'];
-    if (conKyrVal == 1 || conKyrVal == true || conKyrVal.toString() == 'true') {
-      _isConfirmedKyro = true;
-    } else {
-      _isConfirmedKyro = false;
-    }
+    _isConfirmedKyro =
+        (conKyrVal == 1 || conKyrVal == true || conKyrVal.toString() == 'true');
 
     _cargarDetalle();
     _cargarFotoRemota();
+
+    // 🟢 NUEVO: Llamar a la sincronización
+    _sincronizarDetalle();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _sincronizarDetalle() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String url = prefs.getString('velneo_url') ?? '';
+      String apiKey = prefs.getString('velneo_api_key') ?? '';
+      if (url.isEmpty) return;
+      if (!url.startsWith('http')) url = 'https://$url';
+
+      final api = VelneoAPIService(url, apiKey);
+      final db = DatabaseHelper.instance;
+
+      // 1. Obtener Cabecera
+      final pedidoRemoto = await api.obtenerPedido(_pedido['id']);
+      if (pedidoRemoto != null) {
+        await db.insertarPedido(pedidoRemoto);
+      }
+
+      // 2. Obtener Líneas
+      final lineasRemotas = await api.obtenerLineasPedido(_pedido['id']);
+      if (lineasRemotas.isNotEmpty) {
+        await db.eliminarLineasPedido(_pedido['id']);
+        await db.insertarLineasPedidoLote(
+          lineasRemotas.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      if (mounted) {
+        print("✅ Detalle pedido sincronizado");
+        _cargarDetalle(); // Refrescar pantalla
+      }
+    } catch (e) {
+      print("⚠️ Error sync detalle pedido: $e");
+    }
   }
 
   // 🟢 CÁLCULO DE TOTALES (PRIORIDAD SERVIDOR)

@@ -213,6 +213,97 @@ class VelneoAPIService {
     }
   }
 
+  // 🟢 NUEVO: Obtener un PEDIDO individual completo
+  Future<Map<String, dynamic>?> obtenerPedido(int id) async {
+    try {
+      final url = _buildUrl('/VTA_PED_G/$id');
+      final response = await _getWithSSL(
+        url,
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        Map<String, dynamic>? p;
+
+        if (data is Map<String, dynamic>) {
+          if (data.containsKey('id'))
+            p = data;
+          else if (data['vta_ped_g'] != null &&
+              (data['vta_ped_g'] as List).isNotEmpty) {
+            p = data['vta_ped_g'][0];
+          }
+        }
+
+        if (p != null) {
+          return {
+            'id': p['id'],
+            'cliente_id': p['clt'] ?? 0,
+            'cmr': p['cmr'] ?? 0,
+            'serie_id': p['ser'] ?? 0,
+            'fecha': p['fch'] ?? DateTime.now().toIso8601String(),
+            'numero': p['num_ped'] ?? '',
+            'estado': p['est'] ?? '',
+            'observaciones': p['obs'] ?? '',
+            'total': _convertirADouble(p['tot_ped']),
+            'base_total': _convertirADouble(p['bas_tot']),
+            'iva_total': _convertirADouble(p['iva_tot']),
+            'sincronizado': 1,
+            'con_kyr': (p['con_kyr'] == true || p['con_kyr'] == 1) ? 1 : 0,
+          };
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error obtenerPedido: $e');
+      return null;
+    }
+  }
+
+  // 🟢 NUEVO: Obtener un PRESUPUESTO individual completo
+  Future<Map<String, dynamic>?> obtenerPresupuesto(int id) async {
+    try {
+      final url = _buildUrl('/VTA_PRE_G/$id');
+      final response = await _getWithSSL(
+        url,
+      ).timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        Map<String, dynamic>? p;
+
+        if (data is Map<String, dynamic>) {
+          if (data.containsKey('id'))
+            p = data;
+          else if (data['vta_pre_g'] != null &&
+              (data['vta_pre_g'] as List).isNotEmpty) {
+            p = data['vta_pre_g'][0];
+          }
+        }
+
+        if (p != null) {
+          return {
+            'id': p['id'],
+            'cliente_id': p['clt'] ?? 0,
+            'comercial_id': p['cmr'] ?? 0,
+            'serie_id': p['ser'] ?? 0,
+            'fecha': p['fch'] ?? DateTime.now().toIso8601String(),
+            'numero': p['num_pre'] ?? '',
+            'estado': p['est'] ?? '',
+            'observaciones': p['obs'] ?? '',
+            'total': _convertirADouble(p['tot_pre']),
+            'base_total': _convertirADouble(p['bas_tot']),
+            'iva_total': _convertirADouble(p['iva_tot']),
+            'sincronizado': 1,
+          };
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error obtenerPresupuesto: $e');
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>> obtenerClientes() async {
     try {
       final allClientes = <dynamic>[];
@@ -1018,12 +1109,24 @@ class VelneoAPIService {
 
   int? _extraerId(dynamic jsonRes, String keyLista) {
     if (jsonRes is Map<String, dynamic>) {
+      // 1. Buscar en la lista principal (ej: crm_age)
       if (jsonRes.containsKey(keyLista) &&
+          jsonRes[keyLista] is List &&
           (jsonRes[keyLista] as List).isNotEmpty) {
-        return jsonRes[keyLista][0]['id'];
-      } else if (jsonRes.containsKey('id')) {
-        return jsonRes['id'];
+        final item = jsonRes[keyLista][0];
+        return item['id'] ?? item['ID'];
       }
+      // 2. Buscar en la lista con Mayúsculas (ej: CRM_AGE)
+      String keyUpper = keyLista.toUpperCase();
+      if (jsonRes.containsKey(keyUpper) &&
+          jsonRes[keyUpper] is List &&
+          (jsonRes[keyUpper] as List).isNotEmpty) {
+        final item = jsonRes[keyUpper][0];
+        return item['id'] ?? item['ID'];
+      }
+      // 3. Buscar en la raíz del objeto
+      if (jsonRes['id'] != null) return jsonRes['id'];
+      if (jsonRes['ID'] != null) return jsonRes['ID'];
     }
     return null;
   }
@@ -2103,6 +2206,7 @@ class VelneoAPIService {
     }
   }
 
+  // 🟢 CREAR VISITA (Corregido con _extraerId)
   Future<Map<String, dynamic>> crearVisitaAgenda(
     Map<String, dynamic> visita,
   ) async {
@@ -2121,43 +2225,47 @@ class VelneoAPIService {
         'no_gen_pro_vis': visita['no_gen_pro_vis'] ?? false,
       };
 
-      if (visita['hora_inicio'] != null) {
+      // Campos opcionales
+      if (visita['hora_inicio'] != null)
         visitaVelneo['hor_ini'] = visita['hora_inicio'];
-      }
-      if (visita['fecha_fin'] != null) {
+      if (visita['fecha_fin'] != null)
         visitaVelneo['fch_fin'] = visita['fecha_fin'];
-      }
-      if (visita['hora_fin'] != null) {
+      if (visita['hora_fin'] != null)
         visitaVelneo['hor_fin'] = visita['hora_fin'];
-      }
-      if (visita['campana_id'] != 0) {
+      if (visita['campana_id'] != 0)
         visitaVelneo['crm_cam_com'] = visita['campana_id'];
-      }
-
-      // 🟢 NUEVO: Enviar Dirección
       if (visita['direccion_id'] != null && visita['direccion_id'] != 0) {
-        visitaVelneo['dir'] = visita['direccion_id'];
+        visitaVelneo['dir_m'] = visita['direccion_id'];
       }
 
       final request = await httpClient.postUrl(
         Uri.parse(_buildUrl('/CRM_AGE')),
       );
       request.headers.set('Content-Type', 'application/json');
-      request.headers.set('Accept', 'application/json');
       request.write(json.encode(visitaVelneo));
 
       final response = await request.close();
       final stringData = await response.transform(utf8.decoder).join();
 
+      // Log para depuración si falla
+      print('📥 Respuesta API Crear Visita: $stringData');
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         final respuesta = json.decode(stringData);
-        final id =
-            (respuesta['crm_age'] != null && respuesta['crm_age'].isNotEmpty)
-            ? respuesta['crm_age'][0]['id']
-            : respuesta['id'];
-        return {'id': id, 'success': true};
+
+        // Usamos el helper para buscar el ID donde sea
+        final id = _extraerId(respuesta, 'crm_age');
+
+        if (id != null) {
+          return {'id': id, 'success': true};
+        } else {
+          // Si es 200 pero no hay ID, lanzamos error mostrando lo que llegó
+          throw Exception(
+            'Velneo devolvió OK pero sin ID. Respuesta: $stringData',
+          );
+        }
       }
-      throw Exception('Error HTTP ${response.statusCode}');
+      throw Exception('Error HTTP ${response.statusCode}: $stringData');
     } finally {
       httpClient.close();
     }
@@ -2168,15 +2276,8 @@ class VelneoAPIService {
     Map<String, dynamic> visita,
   ) async {
     final httpClient = HttpClient()
-      ..badCertificateCallback =
-          ((X509Certificate cert, String host, int port) => true)
-      ..connectionTimeout = const Duration(seconds: 30);
-
+      ..badCertificateCallback = ((c, h, p) => true);
     try {
-      DebugLogger.log(
-        '📝 API: Actualizando (con POST) visita #$visitaId "${visita['asunto']}"',
-      );
-
       final visitaVelneo = {
         'cli': visita['cliente_id'],
         'tip_vis': visita['tipo_visita'],
@@ -2189,80 +2290,62 @@ class VelneoAPIService {
         'no_gen_pro_vis': visita['no_gen_pro_vis'] ?? false,
       };
 
-      if (visita['hora_inicio'] != null &&
-          visita['hora_inicio'].toString().isNotEmpty) {
+      if (visita['hora_inicio'] != null)
         visitaVelneo['hor_ini'] = visita['hora_inicio'];
-      }
-      if (visita['fecha_fin'] != null &&
-          visita['fecha_fin'].toString().isNotEmpty) {
+      if (visita['fecha_fin'] != null)
         visitaVelneo['fch_fin'] = visita['fecha_fin'];
-      }
-      if (visita['hora_fin'] != null &&
-          visita['hora_fin'].toString().isNotEmpty) {
+      if (visita['hora_fin'] != null)
         visitaVelneo['hor_fin'] = visita['hora_fin'];
-      }
-      if (visita['fecha_proxima_visita'] != null &&
-          visita['fecha_proxima_visita'].toString().isNotEmpty) {
+      if (visita['fecha_proxima_visita'] != null)
         visitaVelneo['fch_pro_vis'] = visita['fecha_proxima_visita'];
-      }
-      if (visita['hora_proxima_visita'] != null &&
-          visita['hora_proxima_visita'].toString().isNotEmpty) {
+      if (visita['hora_proxima_visita'] != null)
         visitaVelneo['hor_pro_vis'] = visita['hora_proxima_visita'];
-      }
-      if (visita['campana_id'] != null && visita['campana_id'] != 0) {
+      if (visita['campana_id'] != 0)
         visitaVelneo['crm_cam_com'] = visita['campana_id'];
+      if (visita['lead_id'] != 0) visitaVelneo['crm_lea'] = visita['lead_id'];
+
+      // 🟢 CORRECCIÓN: Actualizar también la dirección
+      if (visita['direccion_id'] != null && visita['direccion_id'] != 0) {
+        visitaVelneo['dir_m'] = visita['direccion_id'];
       }
-      if (visita['lead_id'] != null && visita['lead_id'] != 0) {
-        visitaVelneo['crm_lea'] = visita['lead_id'];
-      }
 
-      final jsonData = json.encode(visitaVelneo);
-      DebugLogger.log('📤 API: JSON enviado (${jsonData.length} chars)');
-
-      final request = await httpClient
-          .postUrl(Uri.parse(_buildUrl('/CRM_AGE/$visitaId')))
-          .timeout(const Duration(seconds: 30));
-
-      request.headers.set('Content-Type', 'application/json; charset=utf-8');
-      request.headers.set('Accept', 'application/json');
-      request.headers.set('User-Agent', 'Flutter App');
-      request.write(jsonData);
-
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
+      final request = await httpClient.postUrl(
+        Uri.parse(_buildUrl('/CRM_AGE/$visitaId')),
       );
-      final stringData = await response
-          .transform(utf8.decoder)
-          .join()
-          .timeout(const Duration(seconds: 10));
+      request.headers.set('Content-Type', 'application/json');
+      request.write(json.encode(visitaVelneo));
 
-      DebugLogger.log('📥 API: Status ${response.statusCode}');
+      final response = await request.close();
+      final stringData = await response.transform(utf8.decoder).join();
 
       if (response.statusCode == 200) {
         final respuesta = json.decode(stringData);
+        final idRespuesta = _extraerId(respuesta, 'crm_age');
 
-        int? idRespuesta;
-        if (respuesta['crm_age'] != null &&
-            respuesta['crm_age'] is List &&
-            (respuesta['crm_age'] as List).isNotEmpty) {
-          idRespuesta = respuesta['crm_age'][0]['id'];
-        } else if (respuesta['id'] != null) {
-          idRespuesta = respuesta['id'];
-        }
-
-        DebugLogger.log('✅ API: Visita actualizada con ID $idRespuesta');
-        return {'id': idRespuesta ?? visitaId, 'success': true};
+        return {'id': idRespuesta ?? int.tryParse(visitaId), 'success': true};
       }
-
-      DebugLogger.log('❌ API: Error HTTP ${response.statusCode}');
-      throw Exception('Error HTTP ${response.statusCode}');
-    } catch (e) {
-      DebugLogger.log('❌ API: Excepción - $e');
-      rethrow;
+      throw Exception('Error HTTP ${response.statusCode}: $stringData');
     } finally {
       httpClient.close();
     }
   }
+  // 🟢 BORRAR VISITA
+  /*  Future<bool> deleteVisitaAgenda(String visitaId) async {
+    final httpClient = HttpClient()..badCertificateCallback = ((c, h, p) => true);
+    try {
+      final request = await httpClient.deleteUrl(Uri.parse(_buildUrl('/CRM_AGE/$visitaId')));
+      final response = await request.close();
+      // Consumir respuesta aunque no la usemos para liberar el socket
+      await response.drain(); 
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return true;
+      }
+      throw Exception('Error HTTP ${response.statusCode}');
+    } finally {
+      httpClient.close();
+    }
+  }*/
 
   Future<bool> deleteVisitaAgenda(String visitaId) async {
     final httpClient = HttpClient()

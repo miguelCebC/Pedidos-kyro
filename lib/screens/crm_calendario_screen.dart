@@ -16,8 +16,14 @@ class CRMCalendarioScreen extends StatefulWidget {
 class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     with AutomaticKeepAliveClientMixin {
   CalendarFormat _calendarFormat = CalendarFormat.month;
+  RangeSelectionMode _rangeSelectionMode =
+      RangeSelectionMode.toggledOff; // 🟢 Por defecto selección simple
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
+  List<Map<String, dynamic>> _eventosVisibles =
+      []; // 🟢 Lista dinámica (día o rango)
   int? _comercialId;
   String _comercialNombre = 'Sin comercial asignado';
   Map<DateTime, List<Map<String, dynamic>>> _eventos = {};
@@ -196,6 +202,41 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     }
   }
 
+  void _cargarEventosRango(DateTime? start, DateTime? end) {
+    if (start == null) return;
+
+    final List<Map<String, dynamic>> eventosRango = [];
+    final fechaFin = end ?? start; // Si end es null, es un rango de 1 día
+
+    // Iteramos todas las fechas que tienen eventos
+    _eventos.forEach((fecha, listaEventos) {
+      // Normalizar fecha del mapa (ya viene normalizada, pero por seguridad)
+      final fechaEvento = DateTime(fecha.year, fecha.month, fecha.day);
+      final rangoInicio = DateTime(start.year, start.month, start.day);
+      final rangoFin = DateTime(fechaFin.year, fechaFin.month, fechaFin.day);
+
+      // Comprobar si está dentro del rango (inclusivo)
+      if (fechaEvento.compareTo(rangoInicio) >= 0 &&
+          fechaEvento.compareTo(rangoFin) <= 0) {
+        eventosRango.addAll(listaEventos);
+      }
+    });
+
+    _ordenarEventos(eventosRango);
+
+    setState(() {
+      _eventosVisibles = eventosRango;
+    });
+  }
+
+  void _ordenarEventos(List<Map<String, dynamic>> lista) {
+    lista.sort((a, b) {
+      final fA = a['fecha_inicio'] ?? '';
+      final fB = b['fecha_inicio'] ?? '';
+      return fA.compareTo(fB);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -268,7 +309,7 @@ class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
                                           DetalleVisitaScreen(visita: evento),
                                     ),
                                   );
-                                  if (resultado == true) await _cargarEventos();
+                                  if (mounted) await _cargarEventos();
                                 },
                                 child: ListTile(
                                   leading: CircleAvatar(

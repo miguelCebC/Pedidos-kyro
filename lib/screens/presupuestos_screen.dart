@@ -438,7 +438,9 @@ class PresupuestosScreenState extends State<PresupuestosScreen> {
                                   DetallePresupuestoScreen(presupuesto: p),
                             ),
                           );
-                          _cargarDatos();
+                          if (mounted) {
+                            _cargarDatos();
+                          }
                         },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8),

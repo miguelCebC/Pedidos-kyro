@@ -235,10 +235,6 @@ class _CrearVisitaScreenState extends State<CrearVisitaScreen> {
         horaFinStr = horaInicioStr;
       }
 
-      // ==================================================
-      // == 🟢 2. LÓGICA DE GUARDADO (EVITANDO EL TRIGGER) ==
-      // ==================================================
-
       String? fechaProximaStr;
       String? horaProximaStr;
       bool crearVisitaManualmente = false;
@@ -293,9 +289,6 @@ class _CrearVisitaScreenState extends State<CrearVisitaScreen> {
         '📅 Fecha-hora construida: ${fechaHoraInicio.toIso8601String()}',
       );
 
-      // ==================================================
-      // == 🟢 3. MAPA VISITADATA (VISITA ACTUAL) ==
-      // ==================================================
       final visitaData = {
         'cliente_id': _clienteSeleccionado!['id'],
         'tipo_visita': _tipoVisita,
@@ -318,8 +311,6 @@ class _CrearVisitaScreenState extends State<CrearVisitaScreen> {
         'no_gen_tri': noGenTri, // <-- true
         'direccion_id': _direccionSeleccionadaId ?? 0,
       };
-
-      // ==================================================
 
       DebugLogger.log(
         '📦 Datos preparados: Cliente=${visitaData['cliente_id']}, Tipo=${visitaData['tipo_visita']}',
@@ -541,21 +532,8 @@ class _CrearVisitaScreenState extends State<CrearVisitaScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Nueva Visita'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const DebugLogsScreen(),
-                ),
-              );
-            },
-            tooltip: 'Ver logs de depuración',
-          ),
+      appBar: AppBar(title: const Text('Nueva Visita'), actions: [
+   
         ],
       ),
       body: _isLoading
@@ -593,9 +571,7 @@ class _CrearVisitaScreenState extends State<CrearVisitaScreen> {
                             : FontWeight.normal,
                       ),
                     ),
-                    subtitle: _clienteSeleccionado != null
-                        ? Text('ID: ${_clienteSeleccionado!['id']}')
-                        : const Text('Toca para buscar'),
+
                     trailing: const Icon(Icons.search),
                     onTap: _seleccionarCliente,
                   ),

@@ -86,9 +86,7 @@ class _BuscarClienteDialogState extends State<BuscarClienteDialog> {
                       final cliente = _clientes[index];
                       return ListTile(
                         title: Text(cliente['nombre']),
-                        subtitle: Text(
-                          'ID: ${cliente['id']} - ${cliente['telefono'] ?? ''}',
-                        ),
+
                         onTap: () => Navigator.pop(context, cliente),
                       );
                     },

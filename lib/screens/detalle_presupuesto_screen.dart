@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../database_helper.dart';
 import 'editar_presupuesto_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/api_service.dart';
 
 class DetallePresupuestoScreen extends StatefulWidget {
   final Map<String, dynamic> presupuesto;
@@ -32,9 +34,53 @@ class _DetallePresupuestoScreenState extends State<DetallePresupuestoScreen>
   @override
   void initState() {
     super.initState();
-    _presupuesto = widget.presupuesto; // Inicializar con los datos recibidos
+    _presupuesto = widget.presupuesto;
     _tabController = TabController(length: 3, vsync: this);
+
     _cargarDetalle();
+
+    // 🟢 NUEVO: Llamar a la sincronización
+    _sincronizarDetalle();
+  }
+
+  // 🟢 MÉTODO NUEVO
+  Future<void> _sincronizarDetalle() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String url = prefs.getString('velneo_url') ?? '';
+      String apiKey = prefs.getString('velneo_api_key') ?? '';
+      if (url.isEmpty) return;
+      if (!url.startsWith('http')) url = 'https://$url';
+
+      final api = VelneoAPIService(url, apiKey);
+      final db = DatabaseHelper.instance;
+
+      // 1. Cabecera
+      final presupuestoRemoto = await api.obtenerPresupuesto(
+        _presupuesto['id'],
+      );
+      if (presupuestoRemoto != null) {
+        await db.insertarPresupuesto(presupuestoRemoto);
+      }
+
+      // 2. Líneas
+      final lineasRemotas = await api.obtenerLineasPresupuesto(
+        _presupuesto['id'],
+      );
+      if (lineasRemotas.isNotEmpty) {
+        await db.eliminarLineasPresupuesto(_presupuesto['id']);
+        await db.insertarLineasPresupuestoLote(
+          lineasRemotas.cast<Map<String, dynamic>>(),
+        );
+      }
+
+      if (mounted) {
+        print("✅ Detalle presupuesto sincronizado");
+        _cargarDetalle(); // Refrescar pantalla
+      }
+    } catch (e) {
+      print("⚠️ Error sync detalle presupuesto: $e");
+    }
   }
 
   @override

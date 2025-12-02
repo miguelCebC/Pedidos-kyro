@@ -346,9 +346,7 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                             : FontWeight.normal,
                       ),
                     ),
-                    subtitle: _clienteSeleccionado != null
-                        ? Text('ID: ${_clienteSeleccionado!['id']}')
-                        : null,
+
                     leading: const Icon(Icons.business),
                     trailing: const Icon(Icons.search),
                     onTap: _seleccionarCliente,
