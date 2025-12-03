@@ -582,7 +582,9 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                           ),
                         ),
                         // Si está vacío, value debe ser null para no romper
-                        value: _series.isNotEmpty ? _serieSeleccionadaId : null,
+                        initialValue: _series.isNotEmpty
+                            ? _serieSeleccionadaId
+                            : null,
                         // Si está vacío, mostramos mensaje o deshabilitamos
                         items: _series.isEmpty
                             ? []
@@ -629,7 +631,7 @@ class _EditarPresupuestoScreenState extends State<EditarPresupuestoScreen> {
                         border: InputBorder.none,
                         icon: Icon(Icons.location_on, color: Colors.grey),
                       ),
-                      value: _direccionEntregaId,
+                      initialValue: _direccionEntregaId,
                       items: [
                         DropdownMenuItem<int?>(
                           value: null,

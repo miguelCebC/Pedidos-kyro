@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../database_helper.dart';
-import '../services/api_service.dart';
 
 class DetalleClienteScreen extends StatefulWidget {
   final Map<String, dynamic> cliente;

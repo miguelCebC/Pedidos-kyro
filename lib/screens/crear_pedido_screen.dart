@@ -154,8 +154,9 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
       final String apiKey = prefs.getString('velneo_api_key') ?? '';
       final comercialId = prefs.getInt('comercial_id');
 
-      if (url.isEmpty || apiKey.isEmpty)
+      if (url.isEmpty || apiKey.isEmpty) {
         throw Exception('Configura la API primero');
+      }
       if (!url.startsWith('http')) url = 'https://$url';
 
       final apiService = VelneoAPIService(url, apiKey);
@@ -364,7 +365,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                           border: InputBorder.none,
                           icon: Icon(Icons.location_on, color: Colors.grey),
                         ),
-                        value: _direccionEntregaId,
+                        initialValue: _direccionEntregaId,
                         items: _direccionesCliente.map((dir) {
                           return DropdownMenuItem<int>(
                             value: dir['id'],
@@ -421,7 +422,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                           labelText: 'Serie',
                           border: OutlineInputBorder(),
                         ),
-                        value: _serieSeleccionadaId,
+                        initialValue: _serieSeleccionadaId,
                         items: _series
                             .map(
                               (s) => DropdownMenuItem<int>(
@@ -448,7 +449,7 @@ class _CrearPedidoScreenState extends State<CrearPedidoScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.payment),
                   ),
-                  value: _formaPagoSeleccionadaId,
+                  initialValue: _formaPagoSeleccionadaId,
                   items: [
                     const DropdownMenuItem<int>(
                       value: null,

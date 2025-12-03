@@ -16,7 +16,7 @@ class CRMCalendarioScreen extends StatefulWidget {
 class _CRMCalendarioScreenState extends State<CRMCalendarioScreen>
     with AutomaticKeepAliveClientMixin {
   CalendarFormat _calendarFormat = CalendarFormat.month;
-  RangeSelectionMode _rangeSelectionMode =
+  final RangeSelectionMode _rangeSelectionMode =
       RangeSelectionMode.toggledOff; // 🟢 Por defecto selección simple
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;

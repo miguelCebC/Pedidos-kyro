@@ -361,7 +361,7 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.description),
                   ),
-                  value: _serieSeleccionadaId,
+                  initialValue: _serieSeleccionadaId,
                   items: _series.map((s) {
                     return DropdownMenuItem<int>(
                       value: s['id'],
@@ -382,7 +382,7 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.location_on),
                     ),
-                    value: _direccionEntregaId,
+                    initialValue: _direccionEntregaId,
                     items: [
                       const DropdownMenuItem<int>(
                         value: null,
@@ -412,7 +412,7 @@ class _CrearPresupuestoScreenState extends State<CrearPresupuestoScreen> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.payment),
                   ),
-                  value: _formaPagoSeleccionadaId,
+                  initialValue: _formaPagoSeleccionadaId,
                   items: [
                     const DropdownMenuItem<int>(
                       value: null,

@@ -545,7 +545,7 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
         padding: const EdgeInsets.all(16.0),
         children: [
           const Text(
-            'Conexión API Velneo',
+            'Conexión API',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
@@ -609,7 +609,7 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
                 'Activa Presupuestos, Agenda y Gestión de Leads',
               ),
               value: _crmActivo,
-              activeColor: const Color(0xFF032458),
+              activeThumbColor: const Color(0xFF032458),
               onChanged: (bool value) {
                 setState(() => _crmActivo = value);
                 // Guardado automático al cambiar para mejor UX, o esperar al botón guardar
@@ -685,7 +685,7 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
             ElevatedButton.icon(
               onPressed: _sincronizarDatos,
               icon: const Icon(Icons.sync),
-              label: const Text('Sincronizar Datos desde Velneo'),
+              label: const Text('Sincronizar Datos'),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.all(16),
               ),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Mantener si se usa en otros lados
+// Mantener si se usa en otros lados
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'theme/app_theme.dart';
 // import 'screens/login_screen.dart'; // Ya no es necesario importarlo aquí directamente si usas splash

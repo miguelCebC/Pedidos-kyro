@@ -229,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'CRM Velneo',
+                'TecERP',
                 style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
